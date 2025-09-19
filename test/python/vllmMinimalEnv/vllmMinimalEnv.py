@@ -17,22 +17,50 @@ from vllm.distributed import destroy_distributed_environment, destroy_model_para
 from vllm.config import VllmConfig, set_current_vllm_config
 from vllm.forward_context import set_forward_context
 
-
+# Wrapper for moe module, propvides correct vllm context
+# and option to execute via cuda graph.
 class VllmMinimalEnvMoeExecutionWrapper(torch.nn.Module):
     def __init__(self, module, vllm_config):
         super().__init__()
         self.module = module
         self.vllm_config = vllm_config
+        self.staticInput = torch.empty(1,1)
+        self.staticOutput = torch.empty(1,1)
+        self.graph = None
+        self.forwardCallBack = self._forwardStandard
 
     def __getattr__(self, name):
         try:
             return super().__getattr__(name)
         except AttributeError:
             return getattr(self.module, name)
+        
+    def prepareCudaGraphAndReplaceForward(self, input):
+        self.staticInput = torch.empty_like(input)
+        self.staticInput.copy_(input)
+        s = torch.cuda.Stream()
+        s.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(s), torch.no_grad():
+            for _ in range(3):
+                _ = self._forwardStandard(self.staticInput)
+        torch.cuda.current_stream().wait_stream(s)
+        
+        self.graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(self.graph), torch.no_grad():
+             self.staticOutput = self._forwardStandard(self.staticInput)
+             
+        self.forwardCallBack = self._forwardCudaGraph
+             
+    def forward(self, input):
+        return self.forwardCallBack(input)
 
-    def forward(self, *args, **kwargs):
+    def _forwardStandard(self, input):
         with set_forward_context(None, self.vllm_config):
-            return self.module(*args, **kwargs)
+            return self.module(input)
+        
+    def _forwardCudaGraph(self, input):
+        self.graph.replay()
+        return self.staticOutput
 
 # Setups minimal vllm enviroment to run vllm ops, in particular MoE layer instance.
 class VllmMinimalEnv:
