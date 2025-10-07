@@ -1,4 +1,5 @@
 #pragma once
+#include "../hipCommon.h"
 
 // This queue is unusual, since the assumption is that
 // all items slots are preallocated and there is enough of them, so there is no
@@ -34,7 +35,7 @@ struct WorkQueue {
     HIP_CHECK(hipFree(m_workQueue));
   }
 
-  __device__ bool Push(const T* item_global_ptr) {
+  __device__ bool Push(T* item_global_ptr) {
     unsigned int slotIdx = atomicAdd(m_headIdx, 1);
 
     if (slotIdx >= SIZE) {
@@ -42,7 +43,7 @@ struct WorkQueue {
       return false;
     }
 
-    WorkSlot* slot = &m_workQueue[slotIdx];
+    QueueSlot* slot = &m_workQueue[slotIdx];
     slot->data = item_global_ptr;
 
     __threadfence();
@@ -61,12 +62,13 @@ struct WorkQueue {
       currentHeadIdx = __atomic_load_n(m_headIdx, __ATOMIC_RELAXED);
     }
 
+    QueueSlot* slot = &m_workQueue[slotIdx];
+
     while (__atomic_load_n(&slot->isComitted, __ATOMIC_RELAXED) == 0) {
       // Wait until item is commited.
     }
 
     __threadfence(); //< Load with acquire semantics should be enough?
-    QueueSlot* slot = &m_workQueue[slotIdx];
     return slot->data;
   }
 };
