@@ -1,6 +1,6 @@
 #include "../hipCommon.h"
-#include "schedulerPrototype.h"
 #include "../workQueue/workQueue.h"
+#include "schedulerPrototype.h"
 
 // Note: For now I will try approach with single global work queue for all
 // workers. This might be probelmatic due to contention, but it is implemented
@@ -34,13 +34,13 @@ struct Manager {
     HIP_CHECK(hipFree(_tasksAlloc));
   }
 
-  __device__ Task* AllocateTask() { 
+  __device__ Task* AllocateTask() {
     const uint32_t idx = atomicAdd(&_allocatedTaskIdx, 1);
     if (idx >= _tasksSize) {
       assert(false);
       return nullptr;
     }
-    return _tasksAlloc + idx; 
+    return _tasksAlloc + idx;
   }
 
   __device__ uint32_t GetSize() const { return _tasksSize; }
@@ -49,52 +49,110 @@ struct Manager {
 __constant__ Manager globalTaskManager;
 
 __global__ void testWorkItemQueue() {
-
-  if(blockIdx.x == 0 || blockIdx.x == 1) {
+  __shared__ Task s_task;
+  if (blockIdx.x == 0 || blockIdx.x == 1) {
     // Producer block.
-    if (threadIdx.x == 0) {
-      for (int i = 0; i < gridDim.x-2; ++i) {
-        Task* task = globalTaskManager.AllocateTask();
-        const clock_t time = clock64();
-        task->creationTime = time;
-        task->blockIdx = blockIdx.x;
+    for (int i = 0; i < gridDim.x - 2; ++i) {
 
-        globalTaskManager._workQueue.Push(task);
+      // All threads create the same task.
+      Task rTask;
+      rTask.creationTime = time;
+      rTask.blockIdx = blockIdx.x;
 
-        printf("Producer BlockIdx: %i, added task creation time: %li\n", blockIdx.x, time);
+      Task* task_globalMem = nullptr;
+
+      if (threadIdx.x == 0) {
+        // Thread 0 allocates task in global mem:
+        task_globalMem = globalTaskManager.AllocateTask();
       }
-    }
 
+      // Warp 0 cooperatvely fill task in global mem:
+      unsigned long long allocatedTaskInt =
+          reinterpret_cast<unsigned long long>(task_globalMem);
+
+      // Broadcast pointer to all threads in the block.
+      allocatedTaskInt = __shfl(allocatedTaskInt, 0);
+
+      task_globalMem = reinterpret_cast<Task*>(allocatedTaskInt);
+
+      char* taskBlob_g = reinterpret_cast<char*>(&task_globalMem);
+      const char* taskBlob_r = reinterpret_cast<char*>(rTask);
+
+      if (threadIdx.x / warpSize == 0) {
+        for (int i = threadIdx.x; i < sizeof(Task); i += warpSize) {
+          taskBlob_g[b] = taskBlob_r[bi];
+        }
+      }
+
+      // Thread 0 pushes task to the queue:
+      if(threadIdx.x == 0) {
+        globalTaskManager._workQueue.Push(task_globalMem);
+        printf("Producer BlockIdx: %i, added task creation time: %li\n",
+               blockIdx.x, time);
+        }
+      }
+      __syncthreads();
+    }
   } else {
     // Consumer block.
-    if (threadIdx.x == 0) {
-      Task* task = globalTaskManager._workQueue.PopOrBusyWait();
+    for (int i = 0; i < 2; ++i) {
+      // Get new task:
+      Task* task = nullptr;
+      if (threadIdx.x == 0) {
+        task = globalTaskManager._workQueue.PopOrBusyWait();
+        printf("Consumer BlockIdx: %i, got new task!\n", blockIdx.x);
+      }
+      unsigned long long poppedTaskInt =
+          reinterpret_cast<unsigned long long>(task);
 
-      printf("Consumer BlockIdx: %i, got new task!\n", blockIdx.x);
-      const auto taskblockIdx = task->blockIdx;
-      const auto creationTime = task->creationTime;
+      // Broadcast pointer to all threads in the block.
+      poppedTaskInt = __shfl(poppedTaskInt, 0);
 
-      printf("Consumer BlockIdx: %i, task->blockIdx: %i, task->creationTime: %li\n", blockIdx.x, taskblockIdx, creationTime);
+      task = reinterpret_cast<Task*>(poppedTaskInt);
+
+      char* taskBlob_s = reinterpret_cast<char*>(&s_task);
+      const char* taskBlob_g = reinterpret_cast<char*>(task);
+
+      if (threadIdx.x / warpSize == 0) {
+        for (int i = threadIdx.x; i < sizeof(Task); i += warpSize) {
+          taskBlob_s[b] = taskBlob_g[bi];
+        }
+      }
+
+      __syncthreads();
+
+      // ---------------------
+
+      const auto taskblockIdx = s_task.blockIdx;
+      const auto creationTime = s_task.creationTime;
+
+      if (threadIdx.x == 100) {
+        printf(
+            "Consumer BlockIdx: %i, task->blockIdx: %i, task->creationTime: "
+            "%li\n",
+            blockIdx.x, taskblockIdx, creationTime);
+      }
+
+      // Mock execute task...
+      for (volatile int i = 0; i < 100000; ++i)
+        ;
+      __syncthreads();
     }
-  } 
+  }
 }
 
 void runScheduler() {
-
   Manager managerHost;
   managerHost.Init();
-
 
   HIP_CHECK(hipMemcpyToSymbol(HIP_SYMBOL(globalTaskManager), &managerHost,
                               sizeof(Manager), 0, hipMemcpyHostToDevice));
 
-  dim3 gridDim(100, 1, 1);
+  dim3 gridDim(300, 1, 1);
   dim3 blockDim(128, 1, 1);
 
   testWorkItemQueue<<<gridDim, blockDim, 0, 0>>>();
 
-
   HIP_CHECK(hipDeviceSynchronize())
   managerHost.Deinit();
-
 }
