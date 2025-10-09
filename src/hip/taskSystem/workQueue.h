@@ -68,7 +68,7 @@ struct WorkQueue {
       // Wait until item is commited.
     }
 
-    __threadfence(); //< Load with acquire semantics should be enough?
+    __threadfence(); 
     return slot->data;
   }
 };

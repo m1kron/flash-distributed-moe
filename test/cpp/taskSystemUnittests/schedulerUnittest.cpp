@@ -3,7 +3,7 @@
 #include <iostream>
 #include <vector>
 
-#include "../../src/hip/scheduler/schedulerPrototype.h"
+#include "schedulerPrototype.h"
 #include "gtest/gtest.h"
 
 constexpr int error_exit_code = -1;
