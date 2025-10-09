@@ -16,7 +16,7 @@ struct TaskAllocator {
   __device__ T* Allocate() {
     const uint32_t idx = atomicAdd(_allocatedIdx, 1);
     if (idx >= SIZE) {
-      assert(false);
+      printf("TaskAllocator: Out of memory!\n");
       return nullptr;
     }
     return _items + idx;

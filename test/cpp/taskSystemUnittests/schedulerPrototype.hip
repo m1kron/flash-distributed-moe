@@ -8,7 +8,7 @@ struct __align__(16) Task {
   uint32_t blockIdx;
 };
 
-using TaskManagerType = TaskManager<Task, 1024>;
+using TaskManagerType = TaskManager<Task, 2048>;
 __constant__ TaskManagerType globalTaskManager;
 
 __global__ void testWorkItemQueue() {
@@ -28,9 +28,34 @@ __global__ void testWorkItemQueue() {
   for (int i = 0; i < 2; ++i) {
     // Get new task:
     globalTaskManager.PopTask_block(&s_task);
-
     // ---------------------
+    const auto taskblockIdx = s_task.blockIdx;
+    const auto taskId = s_task.taskId;
 
+    if (threadIdx.x == 100) {
+      printf(
+          "Consumer BlockIdx: %i, task->blockIdx: %i, task->ID: "
+          "%i\n",
+          blockIdx.x, taskblockIdx, taskId);
+    }
+
+    // Mock execute task...
+    for (volatile int i = 0; i < 100000; ++i);
+    __syncthreads();
+
+    // All threads create the same task.
+    Task rTask;
+    rTask.taskId = taskId + 2;
+    rTask.blockIdx = taskblockIdx;
+
+    globalTaskManager.PushTask_warp(&rTask);
+    __syncthreads();
+  }
+
+  for (int i = 0; i < 2; ++i) {
+    // Get new task:
+    globalTaskManager.PopTask_block(&s_task);
+    // ---------------------
     const auto taskblockIdx = s_task.blockIdx;
     const auto taskId = s_task.taskId;
 
@@ -52,9 +77,10 @@ void runScheduler() {
   managerHost.Init();
 
   HIP_CHECK(hipMemcpyToSymbol(HIP_SYMBOL(globalTaskManager), &managerHost,
-                              sizeof(TaskManagerType), 0, hipMemcpyHostToDevice));
+                              sizeof(TaskManagerType), 0,
+                              hipMemcpyHostToDevice));
 
-  dim3 gridDim(300, 1, 1);
+  dim3 gridDim(304, 1, 1);
   dim3 blockDim(128, 1, 1);
 
   testWorkItemQueue<<<gridDim, blockDim, 0, 0>>>();
