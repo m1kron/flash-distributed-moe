@@ -65,7 +65,7 @@ struct WorkQueue {
     QueueSlot* slot = &m_workQueue[slotIdx];
 
     while (__atomic_load_n(&slot->isComitted, __ATOMIC_RELAXED) == 0) {
-      // Wait until item is commited.
+      // Wait until item is commited by another thread.
     }
 
     __threadfence(); 
