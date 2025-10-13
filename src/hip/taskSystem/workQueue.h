@@ -39,7 +39,7 @@ struct WorkQueue {
     unsigned int slotIdx = atomicAdd(m_headIdx, 1);
 
     if (slotIdx >= SIZE) {
-      assert(false);
+      printf("Out of slots!\n");
       return false;
     }
 
@@ -53,13 +53,21 @@ struct WorkQueue {
     return true;
   }
 
-  __device__ T* PopOrBusyWait() {
-    unsigned int slotIdx = atomicAdd(m_tailIdx, 1);
-    unsigned int currentHeadIdx = __atomic_load_n(m_headIdx, __ATOMIC_RELAXED);
+  __device__ unsigned int ReserveSlotTicket() {
+    const unsigned int slotIdx = atomicAdd(m_tailIdx, 1);
+    if (slotIdx >= SIZE) {
+      printf("Out of slots!\n");
+      return 0;
+    }
+    return slotIdx;
+  }
 
-    while (currentHeadIdx <= slotIdx) {
-      // Wait until there is something to pop.
-      currentHeadIdx = __atomic_load_n(m_headIdx, __ATOMIC_RELAXED);
+  __device__ bool TryToPop(unsigned int slotTicket, T*& outItem) {
+    const unsigned int slotIdx = slotTicket;
+    const unsigned int currentHeadIdx = __atomic_load_n(m_headIdx, __ATOMIC_RELAXED);
+
+    if (currentHeadIdx <= slotIdx) {
+      return false;
     }
 
     QueueSlot* slot = &m_workQueue[slotIdx];
@@ -68,7 +76,9 @@ struct WorkQueue {
       // Wait until item is commited by another thread.
     }
 
-    __threadfence(); 
-    return slot->data;
+    __threadfence(); //< This barrier might not be needed - check if can be replaces with isCommited load with acquire semantics.
+
+    outItem = slot->data;
+    return true;
   }
 };
