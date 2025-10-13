@@ -84,8 +84,7 @@ struct TaskManager {
       // Thread 0 pushes task to the queue:
       if (threadIdx.x == 0) {
         _workQueue.Push(task_globalMem);
-        printf("Producer BlockIdx: %i, added task ID: %i\n", blockIdx.x,
-               task->taskId);
+        printf("Producer BlockIdx: %i, added task!\n", blockIdx.x);
       }
     }
   }
