@@ -1,5 +1,5 @@
 #pragma once
-#include "../hipCommon.h"
+#include "../hipHostCommon.h"
 #include "../utils/hipDeviceUtils.h"
 
 template <typename T, unsigned int SIZE>

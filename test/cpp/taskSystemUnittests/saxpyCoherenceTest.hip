@@ -1,6 +1,6 @@
 #include <vector>
 
-#include "../../../src/hip/hipCommon.h"
+#include "../../../src/hip/hipHostCommon.h"
 #include "../../../src/hip/taskSystem/taskManager.h"
 #include "../../../src/hip/utils/hipDeviceUtils.h"
 #include "gtest/gtest.h"

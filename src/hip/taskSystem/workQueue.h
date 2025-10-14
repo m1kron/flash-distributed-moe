@@ -1,5 +1,5 @@
 #pragma once
-#include "../hipCommon.h"
+#include "../hipHostCommon.h"
 #include "../utils/hipDeviceUtils.h"
 
 // Lockfree WorkQueue implementation: The main idea was to maximally reduce
