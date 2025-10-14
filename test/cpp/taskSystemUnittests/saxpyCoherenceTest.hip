@@ -69,7 +69,7 @@ __global__ void __launch_bounds__(THREAD_BLOCK_SIZE,
       HIP_DEVICE_LOG("Consumer: Before pop task loop\n");
     }
     // Get new task:
-    const bool noMoreTasks = globalTaskManager.PopTask_warp(&task_s);
+    const bool noMoreTasks = globalTaskManager.WaitAndPopTask_warp(&task_s);
     if (noMoreTasks && threadIdx.x == 0) {
       shouldExitNow_s = true;
     }
