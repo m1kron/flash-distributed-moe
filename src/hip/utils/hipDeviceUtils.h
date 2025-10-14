@@ -9,4 +9,4 @@
   printf("[BIdx:%d TIdX:%d]: " STR, blockIdx.x, threadIdx.x, ##ARGS);
 #endif
 
-#define HIP_DEVICE_ASSERT(CONDITION)  assert(CONDITION);
+#define HIP_DEVICE_ASSERT(CONDITION) assert(CONDITION);
