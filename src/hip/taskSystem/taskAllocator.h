@@ -7,11 +7,12 @@ struct TaskAllocator {
   T* _items;
   uint32_t* _allocatedIdx;
 
-  __host__ void Init();
+  __host__ hipError_t Init();
 
-  __host__ void Deinit() {
-    HIP_CHECK(hipFree(_items));
-    HIP_CHECK(hipFree(_allocatedIdx));
+  __host__ hipError_t Deinit() {
+    HIP_ERROR_CHECK(hipFree(_items));
+    HIP_ERROR_CHECK(hipFree(_allocatedIdx));
+    return hipSuccess;
   }
 
   __device__ T* Allocate() {
@@ -41,9 +42,10 @@ inline __device__ void TaskAllocator<T, SIZE>::Free(T* item) {
 
 /////////////////////////////////////////////////////////////////
 template <typename T, unsigned int SIZE>
-inline __host__ void TaskAllocator<T, SIZE>::Init() {
-  HIP_CHECK(hipMalloc(&_allocatedIdx, sizeof(uint32_t)));
-  HIP_CHECK(hipMemset(_allocatedIdx, 0, sizeof(uint32_t)));
-  HIP_CHECK(hipMalloc(&_items, SIZE * sizeof(T)));
-  HIP_CHECK(hipMemset(_items, 0, SIZE * sizeof(T)));
+inline __host__ hipError_t TaskAllocator<T, SIZE>::Init() {
+  HIP_ERROR_CHECK(hipMalloc(&_allocatedIdx, sizeof(uint32_t)));
+  HIP_ERROR_CHECK(hipMemset(_allocatedIdx, 0, sizeof(uint32_t)));
+  HIP_ERROR_CHECK(hipMalloc(&_items, SIZE * sizeof(T)));
+  HIP_ERROR_CHECK(hipMemset(_items, 0, SIZE * sizeof(T)));
+  return hipSuccess;
 }

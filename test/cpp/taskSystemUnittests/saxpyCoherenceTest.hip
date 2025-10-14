@@ -98,7 +98,7 @@ __global__ void __launch_bounds__(THREAD_BLOCK_SIZE,
 void runInplaceSaxpy(int32_t* dataGpu, size_t dataSize) {
   TaskManagerType managerHost;
   const int blocksNum = dataSize / THREAD_BLOCK_SIZE;
-  managerHost.Init(blocksNum * 2);
+  HIP_ERROR_ASSERT(managerHost.Init(blocksNum * 2));
 
   HIP_ERROR_ASSERT(hipMemcpyToSymbol(HIP_SYMBOL(globalTaskManager),
                                      &managerHost, sizeof(TaskManagerType), 0,
@@ -110,7 +110,7 @@ void runInplaceSaxpy(int32_t* dataGpu, size_t dataSize) {
   inplaceSaxpyUsingTasksKernel<<<gridDim, blockDim, 0, 0>>>(dataGpu, dataSize);
 
   HIP_ERROR_ASSERT(hipDeviceSynchronize());
-  managerHost.Deinit();
+  HIP_ERROR_ASSERT(managerHost.Deinit());
 }
 
 TEST(TaskSystem, SaxpyCoherenceTest) {

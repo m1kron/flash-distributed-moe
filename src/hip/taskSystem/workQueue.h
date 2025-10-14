@@ -16,23 +16,25 @@ struct WorkQueue {
   unsigned int* m_headIdx;
   unsigned int* m_tailIdx;
 
-  __host__ void Init() {
-    HIP_CHECK(hipMalloc(&m_workQueue, SIZE * sizeof(QueueSlot)));
-    HIP_CHECK(hipMalloc(&m_headIdx, sizeof(int*)));
-    HIP_CHECK(hipMalloc(&m_tailIdx, sizeof(int*)));
+  __host__ hipError_t Init() {
+    HIP_ERROR_CHECK(hipMalloc(&m_workQueue, SIZE * sizeof(QueueSlot)));
+    HIP_ERROR_CHECK(hipMalloc(&m_headIdx, sizeof(int*)));
+    HIP_ERROR_CHECK(hipMalloc(&m_tailIdx, sizeof(int*)));
 
-    HIP_CHECK(hipMemset(m_workQueue, 0, SIZE * sizeof(QueueSlot)));
+    HIP_ERROR_CHECK(hipMemset(m_workQueue, 0, SIZE * sizeof(QueueSlot)));
 
     const int zero = 0;
 
-    HIP_CHECK(hipMemcpy(m_headIdx, &zero, sizeof(int), hipMemcpyHostToDevice));
-    HIP_CHECK(hipMemcpy(m_tailIdx, &zero, sizeof(int), hipMemcpyHostToDevice));
+    HIP_ERROR_CHECK(hipMemcpy(m_headIdx, &zero, sizeof(int), hipMemcpyHostToDevice));
+    HIP_ERROR_CHECK(hipMemcpy(m_tailIdx, &zero, sizeof(int), hipMemcpyHostToDevice));
+    return hipSuccess;
   }
 
-  __host__ void Deinit() {
-    HIP_CHECK(hipFree(m_tailIdx));
-    HIP_CHECK(hipFree(m_headIdx));
-    HIP_CHECK(hipFree(m_workQueue));
+  __host__ hipError_t Deinit() {
+    HIP_ERROR_CHECK(hipFree(m_tailIdx));
+    HIP_ERROR_CHECK(hipFree(m_headIdx));
+    HIP_ERROR_CHECK(hipFree(m_workQueue));
+    return hipSuccess;
   }
 
   __device__ bool Push(T* item_global_ptr) {

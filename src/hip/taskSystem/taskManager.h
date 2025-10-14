@@ -16,21 +16,23 @@ struct TaskManager {
   uint32_t* _maxTasks;
   uint32_t* _currentExecutedTasks;
 
-  __host__ void Init(unsigned expectedMaxTasks) {
-    _workQueue.Init();
-    _tasksAlloc.Init();
-    HIP_CHECK(hipMalloc(&_maxTasks, sizeof(uint32_t)));
-    HIP_CHECK(hipMemcpy(_maxTasks, &expectedMaxTasks, sizeof(uint32_t),
+  __host__ hipError_t Init(unsigned expectedMaxTasks) {
+    HIP_ERROR_CHECK(_workQueue.Init());
+    HIP_ERROR_CHECK(_tasksAlloc.Init());
+    HIP_ERROR_CHECK(hipMalloc(&_maxTasks, sizeof(uint32_t)));
+    HIP_ERROR_CHECK(hipMemcpy(_maxTasks, &expectedMaxTasks, sizeof(uint32_t),
                         hipMemcpyHostToDevice));
-    HIP_CHECK(hipMalloc(&_currentExecutedTasks, sizeof(uint32_t)));
-    HIP_CHECK(hipMemset(_currentExecutedTasks, 0, sizeof(uint32_t)));
+    HIP_ERROR_CHECK(hipMalloc(&_currentExecutedTasks, sizeof(uint32_t)));
+    HIP_ERROR_CHECK(hipMemset(_currentExecutedTasks, 0, sizeof(uint32_t)));
+    return hipSuccess;
   }
 
-  __host__ void Deinit() {
-    _workQueue.Deinit();
-    _tasksAlloc.Deinit();
-    HIP_CHECK(hipFree(_maxTasks));
-    HIP_CHECK(hipFree(_currentExecutedTasks));
+  __host__ hipError_t Deinit() {
+    HIP_ERROR_CHECK(_workQueue.Deinit());
+    HIP_ERROR_CHECK(_tasksAlloc.Deinit());
+    HIP_ERROR_CHECK(hipFree(_maxTasks));
+    HIP_ERROR_CHECK(hipFree(_currentExecutedTasks));
+    return hipSuccess;
   }
 
   __device__ uint32_t GetCurrentExecutedTasks() const {
