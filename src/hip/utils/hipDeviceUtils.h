@@ -1,4 +1,6 @@
 #pragma once
+#include <hip/hip_runtime.h>
+#include <assert.h>
 
 #ifdef NDEBUG
 #define HIP_DEVICE_LOG(text, ...) (void)0
@@ -7,9 +9,4 @@
   printf("[BIdx:%d TIdX:%d]: " STR, blockIdx.x, threadIdx.x, ##ARGS);
 #endif
 
-#define HIP_DEVICE_ASSERT(CONDITION)                        \
-  {                                                         \
-    if (!(CONDITION)) {                                     \
-      HIP_DEVICE_LOG("Assertion failed: %s\n", #CONDITION); \
-    }                                                       \
-  }
+#define HIP_DEVICE_ASSERT(CONDITION)  assert(CONDITION);
