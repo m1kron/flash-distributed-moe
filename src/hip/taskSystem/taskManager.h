@@ -11,11 +11,6 @@
 
 template <typename TTask, unsigned int SIZE>
 struct TaskManager {
-  TaskAllocator<TTask, SIZE> _tasksAlloc;
-  WorkQueue<TTask, SIZE> _workQueue;
-  uint32_t* _expectedMaxTasks;
-  uint32_t* _currentExecutedTasks;
-
   // Initializes task manager on host.
   __host__ hipError_t Init(hipStream_t stream, unsigned expectedMaxTasks);
 
@@ -47,6 +42,11 @@ struct TaskManager {
   // returns true. Otherwise return false, and then task_sharedMem contains
   // poped task.
   __device__ bool WaitAndPopTask_warp(TTask* task_sharedMem);
+
+  TaskAllocator<TTask, SIZE> m_tasksAlloc;
+  WorkQueue<TTask, SIZE> m_workQueue;
+  uint32_t* m_expectedMaxTasks;
+  uint32_t* m_currentExecutedTasks;
 };
 
 /////////////////////////////////////////////////////////////////
@@ -60,16 +60,17 @@ template <typename TTask, unsigned int SIZE>
 inline __host__ hipError_t
 TaskManager<TTask, SIZE>::Init(hipStream_t stream, unsigned expectedMaxTasks) {
   // TODO: allocated all neeeded mem with single call.
-  HIP_ERROR_CHECK(_workQueue.Init(stream));
-  HIP_ERROR_CHECK(_tasksAlloc.Init(stream));
-  HIP_ERROR_CHECK(hipMallocAsync(&_expectedMaxTasks, sizeof(uint32_t), stream));
-  HIP_ERROR_CHECK(hipMemcpyAsync(_expectedMaxTasks, &expectedMaxTasks,
+  HIP_ERROR_CHECK(m_workQueue.Init(stream));
+  HIP_ERROR_CHECK(m_tasksAlloc.Init(stream));
+  HIP_ERROR_CHECK(
+      hipMallocAsync(&m_expectedMaxTasks, sizeof(uint32_t), stream));
+  HIP_ERROR_CHECK(hipMemcpyAsync(m_expectedMaxTasks, &expectedMaxTasks,
                                  sizeof(uint32_t), hipMemcpyHostToDevice,
                                  stream));
   HIP_ERROR_CHECK(
-      hipMallocAsync(&_currentExecutedTasks, sizeof(uint32_t), stream));
+      hipMallocAsync(&m_currentExecutedTasks, sizeof(uint32_t), stream));
   HIP_ERROR_CHECK(
-      hipMemsetAsync(_currentExecutedTasks, 0, sizeof(uint32_t), stream));
+      hipMemsetAsync(m_currentExecutedTasks, 0, sizeof(uint32_t), stream));
   return hipSuccess;
 }
 
@@ -77,10 +78,10 @@ TaskManager<TTask, SIZE>::Init(hipStream_t stream, unsigned expectedMaxTasks) {
 template <typename TTask, unsigned int SIZE>
 inline __host__ hipError_t
 TaskManager<TTask, SIZE>::Deinit(hipStream_t stream) {
-  HIP_ERROR_CHECK(_workQueue.Deinit(stream));
-  HIP_ERROR_CHECK(_tasksAlloc.Deinit(stream));
-  HIP_ERROR_CHECK(hipFreeAsync(_expectedMaxTasks, stream));
-  HIP_ERROR_CHECK(hipFreeAsync(_currentExecutedTasks, stream));
+  HIP_ERROR_CHECK(m_workQueue.Deinit(stream));
+  HIP_ERROR_CHECK(m_tasksAlloc.Deinit(stream));
+  HIP_ERROR_CHECK(hipFreeAsync(m_expectedMaxTasks, stream));
+  HIP_ERROR_CHECK(hipFreeAsync(m_currentExecutedTasks, stream));
   return hipSuccess;
 }
 
@@ -88,14 +89,14 @@ TaskManager<TTask, SIZE>::Deinit(hipStream_t stream) {
 template <typename TTask, unsigned int SIZE>
 inline __device__ uint32_t
 TaskManager<TTask, SIZE>::GetCurrentExecutedTasks() const {
-  return __atomic_load_n(_currentExecutedTasks, __ATOMIC_RELAXED);
+  return __atomic_load_n(m_currentExecutedTasks, __ATOMIC_RELAXED);
 }
 
 /////////////////////////////////////////////////////////////////
 template <typename TTask, unsigned int SIZE>
 inline __device__ void
 TaskManager<TTask, SIZE>::IncrementCurrentExecutedTasks() {
-  atomicAdd(_currentExecutedTasks, 1);
+  atomicAdd(m_currentExecutedTasks, 1);
 }
 
 /////////////////////////////////////////////////////////////////
@@ -104,20 +105,20 @@ inline __device__ bool
 TaskManager<TTask, SIZE>::DidExecuteExpectedNumberOfTasks() const {
   // read atomically and compare with max
   const uint32_t expectedMaxExecutedTasks =
-      __atomic_load_n(_expectedMaxTasks, __ATOMIC_RELAXED);
+      __atomic_load_n(m_expectedMaxTasks, __ATOMIC_RELAXED);
   return GetCurrentExecutedTasks() >= expectedMaxExecutedTasks;
 }
 
 /////////////////////////////////////////////////////////////////
 template <typename TTask, unsigned int SIZE>
 inline __device__ TTask* TaskManager<TTask, SIZE>::AllocateTask() {
-  return _tasksAlloc.Allocate();
+  return m_tasksAlloc.Allocate();
 }
 
 /////////////////////////////////////////////////////////////////
 template <typename TTask, unsigned int SIZE>
 inline __device__ void TaskManager<TTask, SIZE>::FreeTask(TTask* task) {
-  _tasksAlloc.Free(task);
+  m_tasksAlloc.Free(task);
 }
 
 /////////////////////////////////////////////////////////////////
@@ -153,7 +154,7 @@ inline __device__ void TaskManager<TTask, SIZE>::PushTask_warp(TTask* task) {
 
     // Thread 0 pushes task to the queue:
     if (threadIdx.x == 0) {
-      _workQueue.Push(task_globalMem);
+      m_workQueue.Push(task_globalMem);
       HIP_DEVICE_LOG("Added task to the queue\n");
     }
   }
@@ -169,8 +170,8 @@ inline __device__ bool TaskManager<TTask, SIZE>::WaitAndPopTask_warp(
 
     bool shouldInterrupt = false;
     if (threadIdx.x == 0) {
-      const auto ticket = _workQueue.ReserveSlotTicket();
-      while (!_workQueue.TryToPop(ticket, task_globalMem)) {
+      const auto ticket = m_workQueue.ReserveSlotTicket();
+      while (!m_workQueue.TryToPop(ticket, task_globalMem)) {
         if (DidExecuteExpectedNumberOfTasks()) {
           shouldInterrupt = true;
           HIP_DEVICE_LOG(
