@@ -95,22 +95,21 @@ __global__ void __launch_bounds__(THREAD_BLOCK_SIZE,
   }
 }
 
-void runInplaceSaxpy(int32_t* dataGpu, size_t dataSize) {
+void runInplaceSaxpy(hipStream_t stream, int32_t* dataGpu, size_t dataSize) {
   TaskManagerType managerHost;
   const int blocksNum = dataSize / THREAD_BLOCK_SIZE;
-  HIP_ERROR_ASSERT(managerHost.Init(blocksNum * 2));
+  HIP_ERROR_ASSERT(managerHost.Init(stream, blocksNum * 2));
 
-  HIP_ERROR_ASSERT(hipMemcpyToSymbol(HIP_SYMBOL(globalTaskManager),
-                                     &managerHost, sizeof(TaskManagerType), 0,
-                                     hipMemcpyHostToDevice));
+  HIP_ERROR_ASSERT(hipMemcpyToSymbolAsync(HIP_SYMBOL(globalTaskManager),
+                                          &managerHost, sizeof(TaskManagerType),
+                                          0, hipMemcpyHostToDevice, stream));
 
   dim3 blockDim(THREAD_BLOCK_SIZE, 1, 1);
   dim3 gridDim(608, 1, 1);
 
   inplaceSaxpyUsingTasksKernel<<<gridDim, blockDim, 0, 0>>>(dataGpu, dataSize);
 
-  HIP_ERROR_ASSERT(hipDeviceSynchronize());
-  HIP_ERROR_ASSERT(managerHost.Deinit());
+  HIP_ERROR_ASSERT(managerHost.Deinit(stream));
 }
 
 TEST(TaskSystem, SaxpyCoherenceTest) {
@@ -122,21 +121,22 @@ TEST(TaskSystem, SaxpyCoherenceTest) {
     dataCpu[i] = i;
   }
 
+  hipStream_t stream = hipStreamDefault;
   int32_t* dataGpu = nullptr;
+
   HIP_ERROR_ASSERT(hipMalloc(&dataGpu, dataSize * sizeof(int32_t)));
   HIP_ERROR_ASSERT(hipMemcpy(dataGpu, dataCpu.data(),
                              dataSize * sizeof(int32_t),
                              hipMemcpyHostToDevice));
 
-  runInplaceSaxpy(dataGpu, dataSize);
+  runInplaceSaxpy(stream, dataGpu, dataSize);
 
   HIP_ERROR_ASSERT(hipDeviceSynchronize());
+  HIP_ERROR_ASSERT(hipGetLastError());
 
   HIP_ERROR_ASSERT(hipMemcpy(dataCpu.data(), dataGpu,
                              dataSize * sizeof(int32_t),
                              hipMemcpyDeviceToHost));
-
-  HIP_ERROR_ASSERT(hipGetLastError());
 
   // Check results:
   for (size_t i = 0; i < dataSize; ++i) {

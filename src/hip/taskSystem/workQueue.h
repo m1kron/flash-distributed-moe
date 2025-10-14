@@ -13,10 +13,10 @@ struct WorkQueue {
   };
 
   // Initializes queue on host, allocates memory for SIZE items of type T.
-  __host__ hipError_t Init();
+  __host__ hipError_t Init(hipStream_t stream);
 
   // Deinitializes queue on host, frees allocated memory.
-  __host__ hipError_t Deinit();
+  __host__ hipError_t Deinit(hipStream_t stream);
 
   // Pushes item to the queue in device code, returns false if out of slots.
   __device__ bool Push(T* item_global_ptr);
@@ -41,28 +41,27 @@ struct WorkQueue {
 
 /////////////////////////////////////////////////////////////////
 template <typename T, unsigned int SIZE>
-inline __host__ hipError_t WorkQueue<T, SIZE>::Init() {
-  HIP_ERROR_CHECK(hipMalloc(&m_workQueue, SIZE * sizeof(QueueSlot)));
-  HIP_ERROR_CHECK(hipMalloc(&m_headIdx, sizeof(int*)));
-  HIP_ERROR_CHECK(hipMalloc(&m_tailIdx, sizeof(int*)));
-
-  HIP_ERROR_CHECK(hipMemset(m_workQueue, 0, SIZE * sizeof(QueueSlot)));
-
-  const int zero = 0;
+inline __host__ hipError_t WorkQueue<T, SIZE>::Init(hipStream_t stream) {
+  HIP_ERROR_CHECK(
+      hipMallocAsync(&m_workQueue, SIZE * sizeof(QueueSlot), stream));
+  HIP_ERROR_CHECK(hipMallocAsync(&m_headIdx, sizeof(int*), stream));
+  HIP_ERROR_CHECK(hipMallocAsync(&m_tailIdx, sizeof(int*), stream));
 
   HIP_ERROR_CHECK(
-      hipMemcpy(m_headIdx, &zero, sizeof(int), hipMemcpyHostToDevice));
+      hipMemsetAsync(m_workQueue, 0, SIZE * sizeof(QueueSlot), stream));
   HIP_ERROR_CHECK(
-      hipMemcpy(m_tailIdx, &zero, sizeof(int), hipMemcpyHostToDevice));
+      hipMemsetAsync(m_headIdx, 0, sizeof(unsigned int), stream));
+  HIP_ERROR_CHECK(
+      hipMemsetAsync(m_tailIdx, 0, sizeof(unsigned int), stream));
   return hipSuccess;
 }
 
 /////////////////////////////////////////////////////////////////
 template <typename T, unsigned int SIZE>
-inline __host__ hipError_t WorkQueue<T, SIZE>::Deinit() {
-  HIP_ERROR_CHECK(hipFree(m_tailIdx));
-  HIP_ERROR_CHECK(hipFree(m_headIdx));
-  HIP_ERROR_CHECK(hipFree(m_workQueue));
+inline __host__ hipError_t WorkQueue<T, SIZE>::Deinit(hipStream_t stream) {
+  HIP_ERROR_CHECK(hipFreeAsync(m_tailIdx, stream));
+  HIP_ERROR_CHECK(hipFreeAsync(m_headIdx, stream));
+  HIP_ERROR_CHECK(hipFreeAsync(m_workQueue, stream));
   return hipSuccess;
 }
 

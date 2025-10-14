@@ -17,10 +17,10 @@ struct TaskManager {
   uint32_t* _currentExecutedTasks;
 
   // Initializes task manager on host.
-  __host__ hipError_t Init(unsigned expectedMaxTasks);
+  __host__ hipError_t Init(hipStream_t stream, unsigned expectedMaxTasks);
 
   // Deinitializes task manager on host.
-  __host__ hipError_t Deinit();
+  __host__ hipError_t Deinit(hipStream_t stream);
 
   // Gets the current number of executed tasks.
   __device__ uint32_t GetCurrentExecutedTasks() const;
@@ -58,24 +58,29 @@ struct TaskManager {
 /////////////////////////////////////////////////////////////////
 template <typename TTask, unsigned int SIZE>
 inline __host__ hipError_t
-TaskManager<TTask, SIZE>::Init(unsigned expectedMaxTasks) {
-  HIP_ERROR_CHECK(_workQueue.Init());
-  HIP_ERROR_CHECK(_tasksAlloc.Init());
-  HIP_ERROR_CHECK(hipMalloc(&_expectedMaxTasks, sizeof(uint32_t)));
-  HIP_ERROR_CHECK(hipMemcpy(_expectedMaxTasks, &expectedMaxTasks,
-                            sizeof(uint32_t), hipMemcpyHostToDevice));
-  HIP_ERROR_CHECK(hipMalloc(&_currentExecutedTasks, sizeof(uint32_t)));
-  HIP_ERROR_CHECK(hipMemset(_currentExecutedTasks, 0, sizeof(uint32_t)));
+TaskManager<TTask, SIZE>::Init(hipStream_t stream, unsigned expectedMaxTasks) {
+  // TODO: allocated all neeeded mem with single call.
+  HIP_ERROR_CHECK(_workQueue.Init(stream));
+  HIP_ERROR_CHECK(_tasksAlloc.Init(stream));
+  HIP_ERROR_CHECK(hipMallocAsync(&_expectedMaxTasks, sizeof(uint32_t), stream));
+  HIP_ERROR_CHECK(hipMemcpyAsync(_expectedMaxTasks, &expectedMaxTasks,
+                                 sizeof(uint32_t), hipMemcpyHostToDevice,
+                                 stream));
+  HIP_ERROR_CHECK(
+      hipMallocAsync(&_currentExecutedTasks, sizeof(uint32_t), stream));
+  HIP_ERROR_CHECK(
+      hipMemsetAsync(_currentExecutedTasks, 0, sizeof(uint32_t), stream));
   return hipSuccess;
 }
 
 /////////////////////////////////////////////////////////////////
 template <typename TTask, unsigned int SIZE>
-inline __host__ hipError_t TaskManager<TTask, SIZE>::Deinit() {
-  HIP_ERROR_CHECK(_workQueue.Deinit());
-  HIP_ERROR_CHECK(_tasksAlloc.Deinit());
-  HIP_ERROR_CHECK(hipFree(_expectedMaxTasks));
-  HIP_ERROR_CHECK(hipFree(_currentExecutedTasks));
+inline __host__ hipError_t
+TaskManager<TTask, SIZE>::Deinit(hipStream_t stream) {
+  HIP_ERROR_CHECK(_workQueue.Deinit(stream));
+  HIP_ERROR_CHECK(_tasksAlloc.Deinit(stream));
+  HIP_ERROR_CHECK(hipFreeAsync(_expectedMaxTasks, stream));
+  HIP_ERROR_CHECK(hipFreeAsync(_currentExecutedTasks, stream));
   return hipSuccess;
 }
 
