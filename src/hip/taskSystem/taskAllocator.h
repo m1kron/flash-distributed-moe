@@ -1,5 +1,6 @@
 #pragma once
 #include "../hipCommon.h"
+#include "../utils/hipDeviceUtils.h"
 
 template <typename T, unsigned int SIZE>
 struct TaskAllocator {
@@ -16,7 +17,7 @@ struct TaskAllocator {
   __device__ T* Allocate() {
     const uint32_t idx = atomicAdd(_allocatedIdx, 1);
     if (idx >= SIZE) {
-      printf("TaskAllocator: Out of memory!\n");
+      HIP_DEVICE_LOG("TaskAllocator: Out of memory!\n");
       return nullptr;
     }
     return _items + idx;

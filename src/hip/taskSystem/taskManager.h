@@ -1,6 +1,7 @@
 #pragma once
 #include "taskAllocator.h"
 #include "workQueue.h"
+#include "../utils/hipDeviceUtils.h"
 
 // Note: For now I will try approach with single global work queue for all
 // workers. This might be probelmatic due to contention, but it is implemented
@@ -84,7 +85,7 @@ struct TaskManager {
       // Thread 0 pushes task to the queue:
       if (threadIdx.x == 0) {
         _workQueue.Push(task_globalMem);
-        printf("Producer BlockIdx: %i, added task!\n", blockIdx.x);
+        HIP_DEVICE_LOG("Added task to the queue\n");
       }
     }
   }
@@ -101,7 +102,7 @@ struct TaskManager {
           if (IsAtMaxExecuted()) {
             // We are at max executed tasks, return false - no task for now.
             shouldInterrupt = true;
-            printf("Consumer BlockIdx: %i, thread0: interrupted!\n", blockIdx.x);
+            HIP_DEVICE_LOG("Breaking waiting loop, since max tasks reached\n");
             break;
           }
         }

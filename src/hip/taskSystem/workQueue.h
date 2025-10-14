@@ -1,12 +1,12 @@
 #pragma once
 #include "../hipCommon.h"
+#include "../utils/hipDeviceUtils.h"
 
-// This queue is unusual, since the assumption is that
-// all items slots are preallocated and there is enough of them, so there is no
-// need to reuse item memory again.
+// Lockfree WorkQueue implementation: The main idea was to maximally reduce
+// possible contention between threads. The implementation does not use CAS
+// operation and does not reuse slots.
 template <typename T, unsigned int SIZE>
 struct WorkQueue {
-
   struct __align__(16) QueueSlot {
     int isComitted;
     T* data;
@@ -39,7 +39,7 @@ struct WorkQueue {
     unsigned int slotIdx = atomicAdd(m_headIdx, 1);
 
     if (slotIdx >= SIZE) {
-      printf("Out of slots!\n");
+      HIP_DEVICE_LOG("Out of slots!\n");
       return false;
     }
 
@@ -48,7 +48,7 @@ struct WorkQueue {
 
     __threadfence();
     const int prev = atomicExch(&slot->isComitted, 1);
-    assert(prev == 0);
+    HIP_DEVICE_ASSERT(prev == 0);
 
     return true;
   }
@@ -56,7 +56,7 @@ struct WorkQueue {
   __device__ unsigned int ReserveSlotTicket() {
     const unsigned int slotIdx = atomicAdd(m_tailIdx, 1);
     if (slotIdx >= SIZE) {
-      printf("Out of slots!\n");
+      HIP_DEVICE_LOG("Out of slots!\n");
       return 0;
     }
     return slotIdx;
@@ -64,7 +64,8 @@ struct WorkQueue {
 
   __device__ bool TryToPop(unsigned int slotTicket, T*& outItem) {
     const unsigned int slotIdx = slotTicket;
-    const unsigned int currentHeadIdx = __atomic_load_n(m_headIdx, __ATOMIC_RELAXED);
+    const unsigned int currentHeadIdx =
+        __atomic_load_n(m_headIdx, __ATOMIC_RELAXED);
 
     if (currentHeadIdx <= slotIdx) {
       return false;
@@ -76,7 +77,8 @@ struct WorkQueue {
       // Wait until item is commited by another thread.
     }
 
-    __threadfence(); //< This barrier might not be needed - check if can be replaces with isCommited load with acquire semantics.
+    __threadfence();  //< This barrier might not be needed - check if can be
+                      //replaces with isCommited load with acquire semantics.
 
     outItem = slot->data;
     return true;
