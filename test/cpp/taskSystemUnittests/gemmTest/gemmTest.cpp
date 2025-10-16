@@ -4,6 +4,7 @@
 
 #include "gtest/gtest.h"
 #include "staticGemmKernel.h"
+#include "taskSystemGemmKernel.h"
 
 #define HIP_ERROR_ASSERT(condition)                     \
   {                                                     \
@@ -50,7 +51,7 @@ TEST(TaskSystem, GemmCoherenceTest) {
                              hipMemcpyHostToDevice));
   HIP_ERROR_ASSERT(hipMemset(d_c, 0, c_size * sizeof(float)));
 
-  staticGemm(d_a, d_b, d_c, m_size, n_size, k_size);
+  HIP_ERROR_ASSERT(taskSystemGemm(d_a, d_b, d_c, m_size, n_size, k_size));
 
   HIP_ERROR_ASSERT(hipDeviceSynchronize())
   HIP_ERROR_ASSERT(hipGetLastError());
