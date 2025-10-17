@@ -10,7 +10,8 @@ __global__ void gemmStaticKernel(const float* __restrict__ A,
   gemm_64x64x2048_single_block<M, N>(A, B, C, blockIdx.x, blockIdx.y);
 }
 
-void staticGemm(const float* A, const float* B, float* C, int M, int N, int K) {
+hipError_t staticGemm(const float* A, const float* B, float* C, int M, int N,
+                      int K) {
   constexpr int m_size = 2048;
   constexpr int n_size = 1536;
   const int k_size = 2048;
@@ -24,4 +25,6 @@ void staticGemm(const float* A, const float* B, float* C, int M, int N, int K) {
   dim3 block(256);
 
   gemmStaticKernel<m_size, n_size><<<grid, block, 0, 0>>>(A, B, C);
+
+  return hipSuccess;
 }
