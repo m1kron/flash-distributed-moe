@@ -47,7 +47,7 @@ __global__ void __launch_bounds__(THREAD_BLOCK_SIZE,
     rTask.A = A;
     rTask.B = B;
     rTask.C = C;
-    rTask.blockTileRowStartIdx = i / (M / TILE_M);
+    rTask.blockTileRowStartIdx = i / (N / TILE_N);
     rTask.blockTileColStartIdx = i % (N / TILE_N);
     globalTaskManager.PushTask_warp(&rTask);
   }
