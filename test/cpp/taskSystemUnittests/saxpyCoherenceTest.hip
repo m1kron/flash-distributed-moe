@@ -3,16 +3,11 @@
 #include "../../../src/hip/hipHostCommon.h"
 #include "../../../src/hip/taskSystem/taskManager.h"
 #include "../../../src/hip/utils/hipDeviceUtils.h"
+#include "../utils/utils.h"
 #include "gtest/gtest.h"
 
 #define THREAD_BLOCK_SIZE 128
 #define MIN_WARPS_PER_EXECUTION_UNIT 4
-
-#define HIP_ERROR_ASSERT(condition)                     \
-  {                                                     \
-    const hipError_t error = condition;                 \
-    ASSERT_EQ(error, hipSuccess) << " for " #condition; \
-  }
 
 struct __align__(16) SaxpyStageTask {
   int32_t stage;

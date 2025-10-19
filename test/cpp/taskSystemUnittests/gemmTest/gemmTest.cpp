@@ -2,22 +2,10 @@
 
 #include <vector>
 
+#include "../../utils/utils.h"
 #include "gtest/gtest.h"
 #include "staticGemmKernel.h"
 #include "taskSystemGemmKernel.h"
-
-#define HIP_ERROR_ASSERT(condition)                     \
-  {                                                     \
-    const hipError_t error = condition;                 \
-    ASSERT_EQ(error, hipSuccess) << " for " #condition; \
-  }
-
-template <typename T>
-static void CheckConstValBuffer(const T* buffer, int size, T value) {
-  for (int i = 0; i < size; ++i) {
-    ASSERT_EQ(buffer[i], value);
-  }
-}
 
 TEST(TaskSystem, GemmCoherenceTest) {
   // Prepare input buffers for module
