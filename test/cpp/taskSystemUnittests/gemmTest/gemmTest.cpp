@@ -7,7 +7,8 @@
 #include "staticGemmKernel.h"
 #include "taskSystemGemmKernel.h"
 
-TEST(TaskSystem, GemmCoherenceTest) {
+template <typename TFunc>
+void PerformGemmCorrectnessTest(const TFunc func) {
   // Prepare input buffers for module
   constexpr int m_size = 2048;
   constexpr int n_size = 1536;
@@ -39,7 +40,7 @@ TEST(TaskSystem, GemmCoherenceTest) {
                              hipMemcpyHostToDevice));
   HIP_ERROR_ASSERT(hipMemset(d_c, 0, c_size * sizeof(float)));
 
-  HIP_ERROR_ASSERT(taskSystemGemm(d_a, d_b, d_c, m_size, n_size, k_size));
+  HIP_ERROR_ASSERT(func(d_a, d_b, d_c, m_size, n_size, k_size));
 
   HIP_ERROR_ASSERT(hipDeviceSynchronize())
   HIP_ERROR_ASSERT(hipGetLastError());
@@ -54,3 +55,12 @@ TEST(TaskSystem, GemmCoherenceTest) {
 
   CheckConstValBuffer(host_c.data(), host_c.size(), 2048.0f);
 }
+
+TEST(TaskSystemUnittests, TaskSystemGemm) {
+  PerformGemmCorrectnessTest(taskSystemGemm);
+}
+
+TEST(TaskSystemUnittests, RefGemm) {
+  PerformGemmCorrectnessTest(staticGemm);
+}
+
