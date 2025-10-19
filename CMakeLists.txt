@@ -23,7 +23,7 @@ FetchContent_MakeAvailable(googletest)
 
 file(GLOB_RECURSE CPP_SOURCES ${PROJECT_SOURCE_DIR}/test/cpp/*.cpp)
 file(GLOB_RECURSE HIP_SOURCES ${PROJECT_SOURCE_DIR}/test/cpp/*.hip)
-set_source_files_properties(${HIP_SRC} PROPERTIES LANGUAGE HIP)
+set_source_files_properties(${HIP_SOURCES} PROPERTIES LANGUAGE HIP)
 add_executable(${app_name} ${CPP_SOURCES} ${HIP_SOURCES})
 target_compile_definitions(${app_name} PRIVATE __HIP_PLATFORM_AMD__)
 target_link_libraries(${app_name} PRIVATE hip::host SRC_HIP_MODULE gtest_main gtest)
