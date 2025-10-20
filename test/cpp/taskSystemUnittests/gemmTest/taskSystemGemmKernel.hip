@@ -7,7 +7,7 @@
 #include "tileGemm.h"
 
 #define THREAD_BLOCK_SIZE 256
-#define MIN_WARPS_PER_EXECUTION_UNIT 1
+#define MI_300X_SM_SIZE 304
 
 struct __align__(16) GemmTileTask {
   const float* A;
@@ -28,10 +28,9 @@ using TaskManagerType = TaskManager<GemmTileTask, 8192>;
 __constant__ TaskManagerType globalTaskManager;
 
 template <int M, int N>
-__global__ void __launch_bounds__(THREAD_BLOCK_SIZE,
-                                  MIN_WARPS_PER_EXECUTION_UNIT)
-    taskSystemGemmKernel(const float* __restrict__ A,
-                         const float* __restrict__ B, float* __restrict__ C) {
+__global__ void taskSystemGemmKernel(const float* __restrict__ A,
+                                     const float* __restrict__ B,
+                                     float* __restrict__ C) {
   constexpr int TILE_M = 64;
   constexpr int TILE_N = 64;
 
@@ -100,8 +99,15 @@ hipError_t taskSystemGemm(const float* A, const float* B, float* C, int M,
                                          &managerHost, sizeof(TaskManagerType),
                                          0, hipMemcpyHostToDevice, stream));
 
+  int blocksPerKernel;
+  HIP_ERROR_CHECK(hipOccupancyMaxActiveBlocksPerMultiprocessor(
+      &blocksPerKernel, taskSystemGemmKernel<m_size, n_size>, THREAD_BLOCK_SIZE,
+      0));
+  
+  assert(blocksPerKernel == 3);
+
   dim3 blockDim(THREAD_BLOCK_SIZE, 1, 1);
-  dim3 gridDim(304, 1, 1);
+  dim3 gridDim(MI_300X_SM_SIZE*blocksPerKernel, 1, 1);
 
   taskSystemGemmKernel<m_size, n_size><<<gridDim, blockDim, 0, 0>>>(A, B, C);
 

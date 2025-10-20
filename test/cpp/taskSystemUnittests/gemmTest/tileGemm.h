@@ -14,7 +14,7 @@ __device__ void gemm_64x64x2048_single_block(const float* __restrict__ A,
   constexpr int TILE_N = 64;
   constexpr int K = 2048;
   // tile along K dimension
-  constexpr int TILE_K = 64;          // 32*2 arrays -> fits typical shared mem
+  constexpr int TILE_K = 32;          // 32*2 arrays -> fits typical shared mem
   constexpr int OUT_PER_THREAD = 16;  // 256 threads * 16 = 4096 outputs
 
   const int BLOCK_START_ROW = blockTileRowStartIdx * TILE_M;
