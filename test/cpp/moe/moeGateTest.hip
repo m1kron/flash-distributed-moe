@@ -1,6 +1,6 @@
 #include <hip/hip_runtime.h>
 
-#include "../../../src/hip/gemm/tileGemm.h"
+#include "../../../src/hip/gemm/gemmTileBlock.h"
 #include "../reference/refGemm.h"
 #include "../utils/utils.h"
 
@@ -8,8 +8,14 @@ template <int M, int N>
 __global__ void refHipKernel(const float* __restrict__ A,
                              const float* __restrict__ B,
                              float* __restrict__ C) {
-  gemm_task<GemmTileParams<M, N, 2048, 1, 256, 32>>(A, B, C, blockIdx.x,
-                                                    blockIdx.y);
+  using TGemmTileParams = GemmTileParams<N, 2048, 1, 256, 32>;
+
+  typename TGemmTileParams::TOutputType
+      out_regs[TGemmTileParams::THREAD_OUTPUT_SIZE];
+
+  GemmTileBlock<TGemmTileParams>(A, B, out_regs, blockIdx.x, blockIdx.y);
+  WriteGemmTileToGlobalMem<TGemmTileParams>(out_regs, C, blockIdx.x,
+                                            blockIdx.y);
 }
 
 hipError_t refHipGemm(const float* A, const float* B, float* C, int M, int N,

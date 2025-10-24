@@ -1,11 +1,9 @@
 #pragma once
-#include "../utils/hipDeviceUtils.h"
 
-template <int _M, int _N, int _K, int _TILE_M, int _TILE_N, int _TILE_K>
+template <int _N, int _K, int _TILE_M, int _TILE_N, int _TILE_K>
 struct GemmTileParams {
-  using TAccuType = float;
+  using TOutputType = float;
   using TInputType = float;
-  constexpr static int M = _M;
   constexpr static int N = _N;
   constexpr static int K = _K;
   constexpr static int TILE_M = _TILE_M;
@@ -19,21 +17,19 @@ struct GemmTileParams {
 
 // NOTE: GPT5-mini generated code with my minor changes.
 // Device GEMM for single block.
-// Assumes blockDim.x == 256 and single block launches this kernel/function.
 // A: M x K (row-major), B: K x N (row-major), C: M x N (row-major).
 template <typename GEMM_TILE_PARAMS>
-__device__ void gemm_task(const float* __restrict__ A,
-                          const float* __restrict__ B, float* __restrict__ C,
-                          int blockTileRowStartIdx, int blockTileColStartIdx) {
+__device__ void GemmTileBlock(
+    const float* __restrict__ A, const float* __restrict__ B,
+    typename GEMM_TILE_PARAMS::TOutputType* __restrict__ CTile_thread_regs,
+    int blockTileRowStartIdx, int blockTileColStartIdx) {
   constexpr int TILE_M = GEMM_TILE_PARAMS::TILE_M;
   constexpr int TILE_N = GEMM_TILE_PARAMS::TILE_N;
   constexpr int K = GEMM_TILE_PARAMS::K;
   constexpr int N = GEMM_TILE_PARAMS::N;
   // tile along K dimension
-  constexpr int TILE_K =
-      GEMM_TILE_PARAMS::TILE_K; 
-  constexpr int OUT_PER_THREAD =
-      GEMM_TILE_PARAMS::THREAD_OUTPUT_SIZE;  
+  constexpr int TILE_K = GEMM_TILE_PARAMS::TILE_K;
+  constexpr int OUT_PER_THREAD = GEMM_TILE_PARAMS::THREAD_OUTPUT_SIZE;
   const int BLOCK_START_ROW = blockTileRowStartIdx * TILE_M;
   const int BLOCK_START_COL = blockTileColStartIdx * TILE_N;
 
@@ -42,26 +38,14 @@ __device__ void gemm_task(const float* __restrict__ A,
 
   const int tid = threadIdx.x;
   const int baseLinear = tid * OUT_PER_THREAD;
-  float acc[OUT_PER_THREAD];
 #pragma unroll
-  for (int i = 0; i < OUT_PER_THREAD; ++i) acc[i] = 0.0f;
-
-  // Precompute row/col for this thread's outputs to avoid recompute inside k
-  // loop
-  int out_row[OUT_PER_THREAD];
-  int out_col[OUT_PER_THREAD];
-#pragma unroll
-  for (int i = 0; i < OUT_PER_THREAD; ++i) {
-    int linear = baseLinear + i;
-    out_row[i] = linear / TILE_N;
-    out_col[i] = linear % TILE_N;
-  }
+  for (int i = 0; i < OUT_PER_THREAD; ++i) CTile_thread_regs[i] = 0.0f;
 
   for (int kt = 0; kt < K; kt += TILE_K) {
     // Cooperative load A tile: sA[row * TILE_K + kLocal] = A[row*K + (kt +
     // kLocal)]
     for (int idx = tid; idx < TILE_M * TILE_K; idx += blockDim.x) {
-      const int row = idx / TILE_K;    
+      const int row = idx / TILE_K;
       const int kLocal = idx % TILE_K;  // 0..TILE_K-1
       sA[row * TILE_K + kLocal] =
           A[(BLOCK_START_ROW + row) * K + (kt + kLocal)];
@@ -71,7 +55,7 @@ __device__ void gemm_task(const float* __restrict__ A,
     // col]
     for (int idx = tid; idx < TILE_K * TILE_N; idx += blockDim.x) {
       const int kLocal = idx / TILE_N;  // 0..TILE_K-1
-      const int col = idx % TILE_N;     
+      const int col = idx % TILE_N;
       sB[kLocal * TILE_N + col] =
           B[(kt + kLocal) * N + (col + BLOCK_START_COL)];
     }
@@ -84,25 +68,40 @@ __device__ void gemm_task(const float* __restrict__ A,
       // For each output this thread owns, read A once and B once (per kLocal)
 #pragma unroll
       for (int out = 0; out < OUT_PER_THREAD; ++out) {
-        const int r = out_row[out];
-        const int c = out_col[out];
+        const int linear = baseLinear + out;
+        const int r = linear / TILE_N;
+        const int c = linear % TILE_N;
         const float aval = sA[r * TILE_K + kLocal];
         const float bval = sB[kLocal * TILE_N + c];
-        acc[out] += aval * bval;
+        CTile_thread_regs[out] += aval * bval;
       }
     }
 
     __syncthreads();
   }
+}
 
-  // Write results
+// Writes tile output distributed in registers in all participating threads to
+// global mem.
+template <typename GEMM_TILE_PARAMS>
+__device__ void WriteGemmTileToGlobalMem(
+    const typename GEMM_TILE_PARAMS::
+        TOutputType* __restrict__ outTile_thread_regs,
+    typename GEMM_TILE_PARAMS::TOutputType* __restrict__ out_global,
+    int blockTileRowStartIdx, int blockTileColStartIdx) {
+  constexpr int OUT_PER_THREAD = GEMM_TILE_PARAMS::THREAD_OUTPUT_SIZE;
+  constexpr int TILE_M = GEMM_TILE_PARAMS::TILE_M;
+  constexpr int TILE_N = GEMM_TILE_PARAMS::TILE_N;
+  constexpr int N = GEMM_TILE_PARAMS::N;
+  const int BLOCK_START_ROW = blockTileRowStartIdx * TILE_M;
+  const int BLOCK_START_COL = blockTileColStartIdx * TILE_N;
+  const int baseLinear = threadIdx.x * OUT_PER_THREAD;
 #pragma unroll
   for (int out = 0; out < OUT_PER_THREAD; ++out) {
     const int linear = baseLinear + out;
-    if (linear < (TILE_M * TILE_N)) {
-      const int r = out_row[out];
-      const int c = out_col[out];
-      C[(BLOCK_START_ROW + r) * N + c + BLOCK_START_COL] = acc[out];
-    }
+    const int r = linear / TILE_N;
+    const int c = linear % TILE_N;
+    out_global[(BLOCK_START_ROW + r) * N + c + BLOCK_START_COL] =
+        outTile_thread_regs[out];
   }
 }
