@@ -1,7 +1,9 @@
 #include <hip/hip_runtime.h>
 
 #include "../../../src/hip/gemm/gemmTileBlock.h"
+#include "../../../src/hip/softmax/softmaxTile.h"
 #include "../reference/refGemm.h"
+#include "../reference/refSoftmax.h"
 #include "../utils/utils.h"
 
 template <int M, int N>
@@ -14,6 +16,7 @@ __global__ void refHipKernel(const float* __restrict__ A,
       out_regs[TGemmTileParams::THREAD_OUTPUT_SIZE];
 
   GemmTileBlock<TGemmTileParams>(A, B, out_regs, blockIdx.x, blockIdx.y);
+  out_regs[0] = softmax_row_256_warpopt(out_regs[0]);
   WriteGemmTileToGlobalMem<TGemmTileParams>(out_regs, C, blockIdx.x,
                                             blockIdx.y);
 }
@@ -48,8 +51,8 @@ void PerformGemmCorrectnessTest2(const TFunc func) {
   constexpr int b_size = k_size * n_size;
   constexpr int c_size = m_size * n_size;
 
-  std::vector<float> host_a = RandomVector<float>(a_size);
-  std::vector<float> host_b = RandomVector<float>(b_size);
+  std::vector<float> host_a = RandomVector<float>(a_size, -0.1f, 0.1f);
+  std::vector<float> host_b = RandomVector<float>(b_size, -0.1f, 0.1f);
   std::vector<float> host_c(c_size);
 
   float* d_a = nullptr;
@@ -80,6 +83,8 @@ void PerformGemmCorrectnessTest2(const TFunc func) {
 
   auto ref =
       test::refGemm(host_a.data(), host_b.data(), m_size, n_size, k_size);
+
+  test::refSoftmaxRowOnlineInplace(ref.data(), m_size, n_size);
 
   CheckAgainstRefBuffer(host_c.data(), ref.data(), ref.size());
 }

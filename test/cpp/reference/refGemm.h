@@ -13,9 +13,8 @@ inline std::vector<T> refGemm(const T* A, const T* B, int M, int N, int K) {
   //  B: K x N
   //  C: M x N
 
-  std::vector<T> out(M*N, T(0));
+  std::vector<T> out(M * N, T(0));
   T* C = out.data();
-  
 
   for (int i = 0; i < M; ++i) {
     T* Crow = C + size_t(i) * size_t(N);
