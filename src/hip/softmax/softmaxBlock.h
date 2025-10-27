@@ -18,7 +18,7 @@
 //  uses double
 //    for a small number of warp partials to keep precision.
 template <typename T = float>
-__device__ float softmax_row_256_warpopt(T input) {
+__device__ float Softmax256_block(T input) {
   constexpr int COLS = 256;
   constexpr int WARP_SIZE = warpSize;          // ROCm wavefront size
   constexpr int NUM_WARPS = COLS / WARP_SIZE;  // = 4
@@ -74,22 +74,21 @@ __device__ float softmax_row_256_warpopt(T input) {
   if (lane == 0) s_warp_sum[warpId] = wsum;
   __syncthreads();
 
-  // thread 0 reduces per-warp sums to global sum (double for safety)
-  double global_sum_d;
+  // thread 0 reduces per-warp sums to global sum.
+  float global_sum_d;
   if (tid == 0) {
-    double acc = 0.0;
-    for (int w = 0; w < NUM_WARPS; ++w)
-      acc += static_cast<double>(s_warp_sum[w]);
+    float acc = 0.0;
+    for (int w = 0; w < NUM_WARPS; ++w) acc += s_warp_sum[w];
     global_sum_d = acc;
-    s_warp_sum[0] = static_cast<float>(global_sum_d);  // carrier
+    s_warp_sum[0] = global_sum_d;  // carrier
   }
   __syncthreads();
-  global_sum_d = static_cast<double>(s_warp_sum[0]);
+  global_sum_d = s_warp_sum[0];
 
   // write normalized output
   if (global_sum_d <= 0.0) {
-    return static_cast<T>(1.0 / static_cast<double>(COLS));
+    return static_cast<T>(1.0f / static_cast<float>(COLS));
   } else {
-    return static_cast<T>((static_cast<double>(e) / global_sum_d));
+    return static_cast<T>(e / global_sum_d);
   }
 }

@@ -19,7 +19,7 @@ struct GemmTileParams {
 // Device GEMM for single block.
 // A: M x K (row-major), B: K x N (row-major), C: M x N (row-major).
 template <typename GEMM_TILE_PARAMS>
-__device__ void GemmTileBlock(
+__device__ void GemmTile_block(
     const float* __restrict__ A, const float* __restrict__ B,
     typename GEMM_TILE_PARAMS::TOutputType* __restrict__ CTile_thread_regs,
     int blockTileRowStartIdx, int blockTileColStartIdx) {
@@ -84,7 +84,7 @@ __device__ void GemmTileBlock(
 // Writes tile output distributed in registers in all participating threads to
 // global mem.
 template <typename GEMM_TILE_PARAMS>
-__device__ void WriteGemmTileToGlobalMem(
+__device__ void WriteGemmTileToGlobalMem_block(
     const typename GEMM_TILE_PARAMS::
         TOutputType* __restrict__ outTile_thread_regs,
     typename GEMM_TILE_PARAMS::TOutputType* __restrict__ out_global,

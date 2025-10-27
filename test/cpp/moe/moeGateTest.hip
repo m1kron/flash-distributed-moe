@@ -1,7 +1,7 @@
 #include <hip/hip_runtime.h>
 
 #include "../../../src/hip/gemm/gemmTileBlock.h"
-#include "../../../src/hip/softmax/softmaxTile.h"
+#include "../../../src/hip/softmax/softmaxBlock.h"
 #include "../reference/refGemm.h"
 #include "../reference/refSoftmax.h"
 #include "../utils/utils.h"
@@ -15,10 +15,10 @@ __global__ void refHipKernel(const float* __restrict__ A,
   typename TGemmTileParams::TOutputType
       out_regs[TGemmTileParams::THREAD_OUTPUT_SIZE];
 
-  GemmTileBlock<TGemmTileParams>(A, B, out_regs, blockIdx.x, blockIdx.y);
-  out_regs[0] = softmax_row_256_warpopt(out_regs[0]);
-  WriteGemmTileToGlobalMem<TGemmTileParams>(out_regs, C, blockIdx.x,
-                                            blockIdx.y);
+  GemmTile_block<TGemmTileParams>(A, B, out_regs, blockIdx.x, blockIdx.y);
+  out_regs[0] = Softmax256_block(out_regs[0]);
+  WriteGemmTileToGlobalMem_block<TGemmTileParams>(out_regs, C, blockIdx.x,
+                                                  blockIdx.y);
 }
 
 hipError_t refHipGemm(const float* A, const float* B, float* C, int M, int N,
