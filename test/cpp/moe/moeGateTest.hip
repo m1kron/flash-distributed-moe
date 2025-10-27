@@ -1,8 +1,8 @@
 #include <hip/hip_runtime.h>
 
-#include "../../../src/hip/gemm/gemmTileBlock.h"
-#include "../../../src/hip/softmax/softmaxBlock.h"
-#include "../../../src/hip/topk/topkBlock.h"
+#include "../../../src/hip/tasks/internal/gemmTileBlock.h"
+#include "../../../src/hip/tasks/internal/softmaxBlock.h"
+#include "../../../src/hip/tasks/internal/topkBlock.h"
 #include "../reference/refGemm.h"
 #include "../reference/refSoftmax.h"
 #include "../reference/refTopk.h"
