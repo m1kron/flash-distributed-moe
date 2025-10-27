@@ -7,17 +7,17 @@ template <int M, int N>
 __global__ void gemmStaticKernel(const float* __restrict__ A,
                                  const float* __restrict__ B,
                                  float* __restrict__ C) {
-  gemm_64x64x2048_single_block<M, N>(A, B, C, blockIdx.x, blockIdx.y);
+  gemm_64x64x2048_single_block<N>(A, B, C, blockIdx.x, blockIdx.y);
 }
 
 hipError_t staticGemm(const float* A, const float* B, float* C, int M, int N,
                       int K) {
   constexpr int m_size = 2048;
   constexpr int n_size = 1536;
-  const int k_size = 2048;
-  const int m_tile_size = 64;
-  const int n_tile_size = 64;
-  assert(K == 2048);
+  constexpr int k_size = 2048;
+  constexpr int m_tile_size = 64;
+  constexpr int n_tile_size = 64;
+  assert(K == k_size);
   assert(M == m_size);
   assert(N == n_size);
 

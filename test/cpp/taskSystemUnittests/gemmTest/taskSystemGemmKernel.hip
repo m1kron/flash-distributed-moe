@@ -17,11 +17,11 @@ struct __align__(16) GemmTileTask {
   int blockTileColStartIdx;
 };
 
-template <int M, int N>
+template <int N>
 __device__ void ExecuteTask(const GemmTileTask& task) {
-  gemm_64x64x2048_single_block<M, N>(task.A, task.B, task.C,
-                                     task.blockTileRowStartIdx,
-                                     task.blockTileColStartIdx);
+  gemm_64x64x2048_single_block<N>(task.A, task.B, task.C,
+                                  task.blockTileRowStartIdx,
+                                  task.blockTileColStartIdx);
 }
 
 using TaskManagerType = TaskManager<GemmTileTask, 8192>;
@@ -75,7 +75,7 @@ __global__ void taskSystemGemmKernel(const float* __restrict__ A,
     rTask.C = task_s.C;
     rTask.blockTileRowStartIdx = task_s.blockTileRowStartIdx;
     rTask.blockTileColStartIdx = task_s.blockTileColStartIdx;
-    ExecuteTask<M, N>(rTask);
+    ExecuteTask<N>(rTask);
   }
 }
 
@@ -103,11 +103,11 @@ hipError_t taskSystemGemm(const float* A, const float* B, float* C, int M,
   HIP_ERROR_CHECK(hipOccupancyMaxActiveBlocksPerMultiprocessor(
       &blocksPerKernel, taskSystemGemmKernel<m_size, n_size>, THREAD_BLOCK_SIZE,
       0));
-  
+
   assert(blocksPerKernel == 3);
 
   dim3 blockDim(THREAD_BLOCK_SIZE, 1, 1);
-  dim3 gridDim(MI_300X_SM_SIZE*blocksPerKernel, 1, 1);
+  dim3 gridDim(MI_300X_SM_SIZE * blocksPerKernel, 1, 1);
 
   taskSystemGemmKernel<m_size, n_size><<<gridDim, blockDim, 0, 0>>>(A, B, C);
 

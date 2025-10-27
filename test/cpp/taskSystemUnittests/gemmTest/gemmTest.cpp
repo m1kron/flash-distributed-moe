@@ -60,7 +60,4 @@ TEST(TaskSystemUnittests, TaskSystemGemm) {
   PerformGemmCorrectnessTest(taskSystemGemm);
 }
 
-TEST(TaskSystemUnittests, RefGemm) {
-  PerformGemmCorrectnessTest(staticGemm);
-}
-
+TEST(TaskSystemUnittests, RefGemm) { PerformGemmCorrectnessTest(staticGemm); }
