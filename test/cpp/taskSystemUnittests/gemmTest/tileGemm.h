@@ -6,18 +6,22 @@ constexpr int TILE_N = 32;
 constexpr int THREADS = 128;
 
 template <int N>
-__device__ void gemm_64x64x2048_single_block(const float* __restrict__ A,
-                                             const float* __restrict__ B,
-                                             float* __restrict__ C,
-                                             int blockTileRowStartIdx,
-                                             int blockTileColStartIdx) {
+struct TestTileGemm {
   using TGemmTileParams = GemmTileParams<N, 2048, TILE_M, TILE_N, 32, THREADS>;
 
-  typename TGemmTileParams::TOutputType
-      out_regs[TGemmTileParams::THREAD_OUTPUT_SIZE];
+  static constexpr int SHARED_MEM_NEEDES_BYTES =
+      TGemmTileParams::SHARED_MEM_NEEDES_BYTES;
 
-  GemmTile_block<TGemmTileParams>(A, B, out_regs, blockTileRowStartIdx,
-                                  blockTileColStartIdx);
-  WriteGemmTileToGlobalMem_block<TGemmTileParams>(
-      out_regs, C, blockTileRowStartIdx, blockTileColStartIdx);
-}
+  static __device__ void gemm_64x64x2048_single_block(
+      const float* __restrict__ A, const float* __restrict__ B,
+      float* __restrict__ C, int blockTileRowStartIdx, int blockTileColStartIdx,
+      void* sharedMemPool) {
+    typename TGemmTileParams::TOutputType
+        out_regs[TGemmTileParams::THREAD_OUTPUT_SIZE];
+
+    GemmTile_block<TGemmTileParams>(A, B, out_regs, blockTileRowStartIdx,
+                                    blockTileColStartIdx, sharedMemPool);
+    WriteGemmTileToGlobalMem_block<TGemmTileParams>(
+        out_regs, C, blockTileRowStartIdx, blockTileColStartIdx);
+  }
+};

@@ -18,7 +18,7 @@
 //  uses double
 //    for a small number of warp partials to keep precision.
 template <int _SIZE, typename T = float>
-__device__ float Softmax_block(T input) {
+__device__ float Softmax_block(T input, void* sharedMemPool) {
   constexpr int COLS = _SIZE;
   constexpr int WARP_SIZE = warpSize;  // ROCm wavefront size
   constexpr int NUM_WARPS = COLS / WARP_SIZE;
@@ -39,8 +39,9 @@ __device__ float Softmax_block(T input) {
   }
 
   // shared per-warp maxima and per-warp sums
-  __shared__ float s_warp_max[NUM_WARPS];
-  __shared__ float s_warp_sum[NUM_WARPS];
+  float* sharedMemPoolFloat = reinterpret_cast<float*>(sharedMemPool);
+  float* s_warp_max = sharedMemPoolFloat;
+  float* s_warp_sum = sharedMemPoolFloat + NUM_WARPS;
 
   // warp leader writes warp max to shared
   if (lane == 0) s_warp_max[warpId] = wmax;
