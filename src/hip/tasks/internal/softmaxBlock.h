@@ -6,8 +6,8 @@
 
 // GPT5-mini generated code:
 // Optimized device softmax for a single row where:
-//  - row length (cols) == 256
-//  - blockDim.x == 256 (one thread per column)
+//  - row length (cols) == _SIZE
+//  - blockDim.x == _SIZE (one thread per column)
 // Uses warp-level reductions (assumes warpSize == 64 on ROCm) to reduce
 // shared-memory traffic.
 //
@@ -17,13 +17,13 @@
 //  - All intermediate reductions use float/warp shuffles and final accumulation
 //  uses double
 //    for a small number of warp partials to keep precision.
-template <typename T = float>
-__device__ float Softmax256_block(T input) {
-  constexpr int COLS = 256;
-  constexpr int WARP_SIZE = warpSize;          // ROCm wavefront size
-  constexpr int NUM_WARPS = COLS / WARP_SIZE;  // = 4
+template <int _SIZE, typename T = float>
+__device__ float Softmax_block(T input) {
+  constexpr int COLS = _SIZE;
+  constexpr int WARP_SIZE = warpSize;  // ROCm wavefront size
+  constexpr int NUM_WARPS = COLS / WARP_SIZE;
 
-  const int tid = threadIdx.x;  // expected 0..255
+  const int tid = threadIdx.x;
   const int lane = tid & (WARP_SIZE - 1);
   const int warpId = tid >> 6;  // tid / 64
 

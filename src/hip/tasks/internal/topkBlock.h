@@ -7,9 +7,9 @@
 
 // GPT5-mini generated code with my minor changes.
 /*
-  Bitonic-based device top-8 for a 256-item tile.
+  Bitonic-based device top-8 for a _SIZE-item tile.
 
-  - Assumes blockDim.x == 256 and each block handles one 256-item tile.
+  - Assumes blockDim.x == _SIZE and each block handles one _SIZE-item tile.
   - Each thread initially owns one item: data[tid]
   - After the in-place bitonic sort in shared memory the array is sorted
     in descending order (largest first). Threads 0..7 then write top-8
@@ -17,13 +17,13 @@
 
   Notes:
   - This implementation favors clarity and correctness of the bitonic network.
-  - TOPK=8 and TILE=256 are compile-time constants here.
+  - TOPK=8 and TILE=_SIZE are compile-time constants here.
 */
 
-template <typename T = float>
-__device__ void Topk8_256_block(T input, T* __restrict__ out_vals,
-                                int* __restrict__ out_idx) {
-  constexpr int THREADS = 256;
+template <int _SIZE, typename T = float>
+__device__ void Topk8_block(T input, T* __restrict__ out_vals,
+                            int* __restrict__ out_idx) {
+  constexpr int THREADS = _SIZE;
   constexpr int TOPK = 8;
 
   const int tid = threadIdx.x;
@@ -37,7 +37,7 @@ __device__ void Topk8_256_block(T input, T* __restrict__ out_vals,
   sidx[tid] = tid;
   __syncthreads();
 
-  // Bitonic sort network (in-place) for 256 elements.
+  // Bitonic sort network (in-place) for _SIZE elements.
   // We adapt the classic bitonic compare-exchange to produce descending order.
   // Outer loop: size of subsequence to be bitonic-sorted (k)
   for (int k = 2; k <= THREADS; k <<= 1) {
