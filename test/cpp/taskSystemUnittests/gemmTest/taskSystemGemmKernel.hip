@@ -16,11 +16,11 @@ struct __align__(16) GemmTileTask {
   int blockTileColStartIdx;
 };
 
-template <int N>
-__device__ void ExecuteTask(const GemmTileTask& task) {
-  gemm_64x64x2048_single_block<N>(task.A, task.B, task.C,
-                                  task.blockTileRowStartIdx,
-                                  task.blockTileColStartIdx);
+template <typename TILE>
+__device__ void ExecuteTask(const GemmTileTask& task, void* sharedMemPool) {
+  TILE::gemm_64x64x2048_single_block(task.A, task.B, task.C,
+                                     task.blockTileRowStartIdx,
+                                     task.blockTileColStartIdx, sharedMemPool);
 }
 
 using TaskManagerType = TaskManager<GemmTileTask, 8192>;
@@ -30,11 +30,8 @@ template <int M, int N>
 __global__ void taskSystemGemmKernel(const float* __restrict__ A,
                                      const float* __restrict__ B,
                                      float* __restrict__ C) {
-  __shared__ GemmTileTask task_s;
-  __shared__ bool shouldExitNow_s;
-  if (threadIdx.x == 0) {
-    shouldExitNow_s = false;
-  }
+  using TestTile = TestTileGemm<N>;
+  __shared__ char sharedMemPool[TestTile::SHARED_MEM_NEEDES_BYTES];
 
   // Warp0 adds new tasks:
   for (int i = blockIdx.x; i < (M / TILE_M) * (N / TILE_N); i += gridDim.x) {
@@ -53,25 +50,29 @@ __global__ void taskSystemGemmKernel(const float* __restrict__ A,
     if (threadIdx.x == 65 || threadIdx.x == 1) {
       HIP_DEVICE_LOG("Consumer: Before pop task loop\n");
     }
+    bool* shouldExitNow_s = reinterpret_cast<bool*>(sharedMemPool);
+    GemmTileTask* task_s =
+        reinterpret_cast<GemmTileTask*>(sharedMemPool + sizeof(bool));
     // Get new task:
-    const bool noMoreTasks = globalTaskManager.WaitAndPopTask_warp(&task_s);
-    if (noMoreTasks && threadIdx.x == 0) {
-      shouldExitNow_s = true;
+    const bool noMoreTasks = globalTaskManager.WaitAndPopTask_warp(task_s);
+    if (threadIdx.x == 0) {
+      *shouldExitNow_s = noMoreTasks;
     }
 
     __syncthreads();
-    if (shouldExitNow_s) {
+    if (*shouldExitNow_s) {
       break;
     }
 
     // Block cooperatively execute task:
     GemmTileTask rTask;
-    rTask.A = task_s.A;
-    rTask.B = task_s.B;
-    rTask.C = task_s.C;
-    rTask.blockTileRowStartIdx = task_s.blockTileRowStartIdx;
-    rTask.blockTileColStartIdx = task_s.blockTileColStartIdx;
-    ExecuteTask<N>(rTask);
+    rTask.A = task_s->A;
+    rTask.B = task_s->B;
+    rTask.C = task_s->C;
+    rTask.blockTileRowStartIdx = task_s->blockTileRowStartIdx;
+    rTask.blockTileColStartIdx = task_s->blockTileColStartIdx;
+    __syncthreads();
+    ExecuteTask<TestTile>(rTask, sharedMemPool);
   }
 }
 
@@ -96,6 +97,8 @@ hipError_t taskSystemGemm(const float* A, const float* B, float* C, int M,
   int blocksPerKernel;
   HIP_ERROR_CHECK(hipOccupancyMaxActiveBlocksPerMultiprocessor(
       &blocksPerKernel, taskSystemGemmKernel<m_size, n_size>, THREADS, 0));
+
+  // printf("blocksPerKernel: %i\n", blocksPerKernel);
 
   dim3 blockDim(THREADS, 1, 1);
   dim3 gridDim(MI_300X_SM_SIZE * blocksPerKernel, 1, 1);

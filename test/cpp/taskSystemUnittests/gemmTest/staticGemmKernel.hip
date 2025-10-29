@@ -7,7 +7,10 @@ template <int M, int N>
 __global__ void gemmStaticKernel(const float* __restrict__ A,
                                  const float* __restrict__ B,
                                  float* __restrict__ C) {
-  gemm_64x64x2048_single_block<N>(A, B, C, blockIdx.x, blockIdx.y);
+  using TestTile = TestTileGemm<N>;
+  __shared__ char sharedMemPool[TestTile::SHARED_MEM_NEEDES_BYTES];
+  TestTile::gemm_64x64x2048_single_block(A, B, C, blockIdx.x, blockIdx.y,
+                                         sharedMemPool);
 }
 
 hipError_t staticGemm(const float* A, const float* B, float* C, int M, int N,

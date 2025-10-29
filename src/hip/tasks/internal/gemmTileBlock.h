@@ -22,7 +22,8 @@ template <typename GEMM_TILE_PARAMS>
 __device__ void GemmTile_block(
     const float* __restrict__ A, const float* __restrict__ B,
     typename GEMM_TILE_PARAMS::TOutputType* __restrict__ CTile_thread_regs,
-    int blockTileRowStartIdx, int blockTileColStartIdx) {
+    int blockTileRowStartIdx, int blockTileColStartIdx,
+    void* __restrict__ sharedMemPool) {
   constexpr int TILE_M = GEMM_TILE_PARAMS::TILE_M;
   constexpr int TILE_N = GEMM_TILE_PARAMS::TILE_N;
   constexpr int K = GEMM_TILE_PARAMS::K;
@@ -33,8 +34,9 @@ __device__ void GemmTile_block(
   const int BLOCK_START_ROW = blockTileRowStartIdx * TILE_M;
   const int BLOCK_START_COL = blockTileColStartIdx * TILE_N;
 
-  __shared__ float sA[TILE_M * TILE_K];  // [row, kLocal]
-  __shared__ float sB[TILE_K * TILE_N];  // [kLocal, col]
+  float* sharedMemPoolFloat = reinterpret_cast<float*>(sharedMemPool);
+  float* sA = sharedMemPoolFloat;
+  float* sB = sharedMemPoolFloat + TILE_M * TILE_K;
 
   const int tid = threadIdx.x;
   const int baseLinear = tid * OUT_PER_THREAD;

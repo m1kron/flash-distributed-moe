@@ -21,10 +21,13 @@ __global__ void refHipKernel(const float* __restrict__ A,
                              int* __restrict__ topIdx) {
   typename TGEMM_TILE::TOutputType out_regs[TGEMM_TILE::THREAD_OUTPUT_SIZE];
 
-  GemmTile_block<TGEMM_TILE>(A, B, out_regs, blockIdx.x, blockIdx.y);
-  out_regs[0] = Softmax_block<TGEMM_TILE::THREADS>(out_regs[0]);
+  __shared__ char sharedMemPool[TGEMM_TILE::SHARED_MEM_NEEDES_BYTES];
+
+  GemmTile_block<TGEMM_TILE>(A, B, out_regs, blockIdx.x, blockIdx.y,
+                             sharedMemPool);
+  out_regs[0] = Softmax_block<TGEMM_TILE::THREADS>(out_regs[0], sharedMemPool);
   Topk8_block<TGEMM_TILE::THREADS>(out_regs[0], topkVals + blockIdx.x * 8,
-                                   topIdx + blockIdx.x * 8);
+                                   topIdx + blockIdx.x * 8, sharedMemPool);
 }
 
 hipError_t refHipGemm(const float* A, const float* B, float* topkVals,

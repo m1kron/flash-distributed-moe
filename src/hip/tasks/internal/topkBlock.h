@@ -22,15 +22,17 @@
 
 template <int _SIZE, typename T = float>
 __device__ void Topk8_block(T input, T* __restrict__ out_vals,
-                            int* __restrict__ out_idx) {
+                            int* __restrict__ out_idx,
+                            void* __restrict__ sharedMemPool) {
   constexpr int THREADS = _SIZE;
   constexpr int TOPK = 8;
 
   const int tid = threadIdx.x;
 
   // Shared arrays for values and indices.
-  __shared__ T svals[THREADS];
-  __shared__ int sidx[THREADS];
+  char* sharedMemPoolBytes = reinterpret_cast<char*>(sharedMemPool);
+  T* svals = reinterpret_cast<T*>(sharedMemPoolBytes);
+  int* sidx = reinterpret_cast<int*>(sharedMemPoolBytes + sizeof(T) * THREADS);
 
   // Load
   svals[tid] = input;
