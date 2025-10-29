@@ -8,37 +8,40 @@
 #include "../reference/refTopk.h"
 #include "../utils/utils.h"
 
-template <int M, int N>
+constexpr int M_SIZE = 48;
+constexpr int N_SIZE = 128;
+constexpr int K_SIZE = 2048;
+constexpr int TOPK = 8;
+constexpr int THREADS = 128;
+
+template <typename TGEMM_TILE>
 __global__ void refHipKernel(const float* __restrict__ A,
                              const float* __restrict__ B,
                              float* __restrict__ topkVals,
                              int* __restrict__ topIdx) {
-  using TGemmTileParams = GemmTileParams<N, 2048, 1, 256, 32>;
+  typename TGEMM_TILE::TOutputType out_regs[TGEMM_TILE::THREAD_OUTPUT_SIZE];
 
-  typename TGemmTileParams::TOutputType
-      out_regs[TGemmTileParams::THREAD_OUTPUT_SIZE];
-
-  GemmTile_block<TGemmTileParams>(A, B, out_regs, blockIdx.x, blockIdx.y);
-  out_regs[0] = Softmax256_block(out_regs[0]);
-  Topk8_256_block(out_regs[0], topkVals + blockIdx.x * 8,
-                  topIdx + blockIdx.x * 8);
+  GemmTile_block<TGEMM_TILE>(A, B, out_regs, blockIdx.x, blockIdx.y);
+  out_regs[0] = Softmax_block<TGEMM_TILE::THREADS>(out_regs[0]);
+  Topk8_block<TGEMM_TILE::THREADS>(out_regs[0], topkVals + blockIdx.x * 8,
+                                   topIdx + blockIdx.x * 8);
 }
 
 hipError_t refHipGemm(const float* A, const float* B, float* topkVals,
                       int* topkIdx, int M, int N, int K) {
-  constexpr int m_size = 48;
-  constexpr int n_size = 256;
-  const int k_size = 2048;
-  const int m_tile_size = 1;
-  const int n_tile_size = 256;
-  assert(K == 2048);
-  assert(M == m_size);
-  assert(N == n_size);
+  constexpr int m_tile_size = 1;
+  constexpr int n_tile_size = N_SIZE;
+  assert(K == K_SIZE);
+  assert(M == M_SIZE);
+  assert(N == N_SIZE);
+
+  using TGemmTileParams =
+      GemmTileParams<N_SIZE, K_SIZE, m_tile_size, n_tile_size, 32, THREADS>;
 
   dim3 grid(M / m_tile_size, N / n_tile_size, 1);
-  dim3 block(256);
+  dim3 block(TGemmTileParams::THREADS);
 
-  refHipKernel<m_size, n_size><<<grid, block, 0, 0>>>(A, B, topkVals, topkIdx);
+  refHipKernel<TGemmTileParams><<<grid, block, 0, 0>>>(A, B, topkVals, topkIdx);
 
   return hipSuccess;
 }
@@ -46,15 +49,11 @@ hipError_t refHipGemm(const float* A, const float* B, float* topkVals,
 template <typename TFunc>
 void PerformGemmCorrectnessTest2(const TFunc func) {
   // Prepare input buffers for module
-  constexpr int m_size = 48;
-  constexpr int n_size = 256;
-  constexpr int k_size = 2048;
-  constexpr int topk = 8;
 
-  constexpr int a_size = m_size * k_size;
-  constexpr int b_size = k_size * n_size;
-  constexpr int c_size = m_size * n_size;
-  constexpr int topk_size = m_size * topk;
+  constexpr int a_size = M_SIZE * K_SIZE;
+  constexpr int b_size = K_SIZE * N_SIZE;
+  constexpr int c_size = M_SIZE * N_SIZE;
+  constexpr int topk_size = M_SIZE * TOPK;
 
   std::vector<float> host_a = RandomVector<float>(a_size, -0.1f, 0.1f);
   std::vector<float> host_b = RandomVector<float>(b_size, -0.1f, 0.1f);
@@ -76,7 +75,7 @@ void PerformGemmCorrectnessTest2(const TFunc func) {
   HIP_ERROR_ASSERT(hipMemcpy(d_b, host_b.data(), b_size * sizeof(float),
                              hipMemcpyHostToDevice));
   HIP_ERROR_ASSERT(
-      func(d_a, d_b, d_topkVals, d_topkIdx, m_size, n_size, k_size));
+      func(d_a, d_b, d_topkVals, d_topkIdx, M_SIZE, N_SIZE, K_SIZE));
 
   HIP_ERROR_ASSERT(hipDeviceSynchronize())
   HIP_ERROR_ASSERT(hipGetLastError());
@@ -93,14 +92,14 @@ void PerformGemmCorrectnessTest2(const TFunc func) {
   HIP_ERROR_ASSERT(hipFree(d_topkIdx));
 
   auto ref =
-      test::refGemm(host_a.data(), host_b.data(), m_size, n_size, k_size);
+      test::refGemm(host_a.data(), host_b.data(), M_SIZE, N_SIZE, K_SIZE);
 
-  test::refSoftmaxRowOnlineInplace(ref.data(), m_size, n_size);
+  test::refSoftmaxRowOnlineInplace(ref.data(), M_SIZE, N_SIZE);
 
   std::vector<float> topkVals_ref(topk_size, 0.0f);
   std::vector<int> topkIdx_ref(topk_size, 0);
 
-  test::refTopK8PerRow(ref.data(), m_size, n_size, topkVals_ref.data(),
+  test::refTopK8PerRow(ref.data(), M_SIZE, N_SIZE, topkVals_ref.data(),
                        topkIdx_ref.data());
 
   CheckAgainstRefBuffer(host_topkVals.data(), topkVals_ref.data(),

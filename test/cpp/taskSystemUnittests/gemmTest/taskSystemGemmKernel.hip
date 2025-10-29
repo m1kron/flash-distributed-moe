@@ -6,7 +6,6 @@
 #include "taskSystemGemmKernel.h"
 #include "tileGemm.h"
 
-#define THREAD_BLOCK_SIZE 256
 #define MI_300X_SM_SIZE 304
 
 struct __align__(16) GemmTileTask {
@@ -31,9 +30,6 @@ template <int M, int N>
 __global__ void taskSystemGemmKernel(const float* __restrict__ A,
                                      const float* __restrict__ B,
                                      float* __restrict__ C) {
-  constexpr int TILE_M = 64;
-  constexpr int TILE_N = 64;
-
   __shared__ GemmTileTask task_s;
   __shared__ bool shouldExitNow_s;
   if (threadIdx.x == 0) {
@@ -84,15 +80,13 @@ hipError_t taskSystemGemm(const float* A, const float* B, float* C, int M,
   constexpr int m_size = 2048;
   constexpr int n_size = 1536;
   const int k_size = 2048;
-  const int m_tile_size = 64;
-  const int n_tile_size = 64;
   assert(K == 2048);
   assert(M == m_size);
   assert(N == n_size);
 
   hipStream_t stream = 0;
   TaskManagerType managerHost;
-  const int expectedNumTasks = (m_size / m_tile_size) * (n_size / n_tile_size);
+  const int expectedNumTasks = (m_size / TILE_M) * (n_size / TILE_N);
   HIP_ERROR_CHECK(managerHost.Init(stream, expectedNumTasks));
 
   HIP_ERROR_CHECK(hipMemcpyToSymbolAsync(HIP_SYMBOL(globalTaskManager),
@@ -101,12 +95,9 @@ hipError_t taskSystemGemm(const float* A, const float* B, float* C, int M,
 
   int blocksPerKernel;
   HIP_ERROR_CHECK(hipOccupancyMaxActiveBlocksPerMultiprocessor(
-      &blocksPerKernel, taskSystemGemmKernel<m_size, n_size>, THREAD_BLOCK_SIZE,
-      0));
+      &blocksPerKernel, taskSystemGemmKernel<m_size, n_size>, THREADS, 0));
 
-  assert(blocksPerKernel == 3);
-
-  dim3 blockDim(THREAD_BLOCK_SIZE, 1, 1);
+  dim3 blockDim(THREADS, 1, 1);
   dim3 gridDim(MI_300X_SM_SIZE * blocksPerKernel, 1, 1);
 
   taskSystemGemmKernel<m_size, n_size><<<gridDim, blockDim, 0, 0>>>(A, B, C);

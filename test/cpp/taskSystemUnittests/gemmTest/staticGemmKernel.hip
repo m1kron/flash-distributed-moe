@@ -15,14 +15,12 @@ hipError_t staticGemm(const float* A, const float* B, float* C, int M, int N,
   constexpr int m_size = 2048;
   constexpr int n_size = 1536;
   constexpr int k_size = 2048;
-  constexpr int m_tile_size = 64;
-  constexpr int n_tile_size = 64;
   assert(K == k_size);
   assert(M == m_size);
   assert(N == n_size);
 
-  dim3 grid(M / m_tile_size, N / n_tile_size, 1);
-  dim3 block(256);
+  dim3 grid(M / TILE_M, N / TILE_N, 1);
+  dim3 block(THREADS);
 
   gemmStaticKernel<m_size, n_size><<<grid, block, 0, 0>>>(A, B, C);
 
