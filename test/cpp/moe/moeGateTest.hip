@@ -3,9 +3,7 @@
 #include "../../../src/hip/tasks/internal/gemmTileBlock.h"
 #include "../../../src/hip/tasks/internal/softmaxBlock.h"
 #include "../../../src/hip/tasks/internal/topkBlock.h"
-#include "../reference/refGemm.h"
-#include "../reference/refSoftmax.h"
-#include "../reference/refTopk.h"
+#include "../reference/refMoeGate.h"
 #include "../utils/utils.h"
 
 constexpr int M_SIZE = 48;
@@ -27,9 +25,23 @@ __global__ void refHipKernel(const float* __restrict__ A,
 
     GemmTile_block<TGEMM_TILE>(A, B, out_regs, tokenIdx, 0, sharedMemPool);
     out_regs[0] =
-        Softmax_block<TGEMM_TILE::THREADS>(out_regs[0], sharedMemPool);
-    Topk8_block<TGEMM_TILE::THREADS>(out_regs[0], topkVals + tokenIdx * 8,
-                                     topIdx + tokenIdx * 8, sharedMemPool);
+        Softmax_block<TGEMM_TILE::THREADS, float>(out_regs[0], sharedMemPool);
+
+    char* sharedMemPoolBytes = reinterpret_cast<char*>(sharedMemPool);
+    float* s_topkVals = reinterpret_cast<float*>(sharedMemPoolBytes);
+    int* s_topkIdx =
+        reinterpret_cast<int*>(sharedMemPoolBytes + sizeof(float) * TOPK);
+    int* nextPool = s_topkIdx + TOPK;
+
+    Topk8_block<TGEMM_TILE::THREADS, float>(out_regs[0], s_topkVals, s_topkIdx,
+                                            nextPool);
+
+    // Write to output:
+    const int tid = threadIdx.x;
+    if (threadIdx.x < TOPK) {
+      topkVals[tokenIdx * 8 + tid] = s_topkVals[tid];
+      topIdx[tokenIdx * 8 + tid] = s_topkIdx[tid];
+    }
   }
 }
 
@@ -98,21 +110,13 @@ void PerformGemmCorrectnessTest2(const TFunc func) {
   HIP_ERROR_ASSERT(hipFree(d_topkVals));
   HIP_ERROR_ASSERT(hipFree(d_topkIdx));
 
-  auto ref =
-      test::refGemm(host_a.data(), host_b.data(), M_SIZE, N_SIZE, K_SIZE);
+  auto refOut = test::refMoeGate(host_a.data(), host_b.data(), M_SIZE, N_SIZE,
+                                 K_SIZE, TOPK);
 
-  test::refSoftmaxRowOnlineInplace(ref.data(), M_SIZE, N_SIZE);
-
-  std::vector<float> topkVals_ref(topk_size, 0.0f);
-  std::vector<int> topkIdx_ref(topk_size, 0);
-
-  test::refTopK8PerRow(ref.data(), M_SIZE, N_SIZE, topkVals_ref.data(),
-                       topkIdx_ref.data());
-
-  CheckAgainstRefBuffer(host_topkVals.data(), topkVals_ref.data(),
-                        topkVals_ref.size());
-  CheckAgainstRefBuffer(host_topkIdx.data(), topkIdx_ref.data(),
-                        topkIdx_ref.size());
+  CheckAgainstRefBuffer(host_topkVals.data(), refOut.topkVals.data(),
+                        refOut.topkVals.size());
+  CheckAgainstRefBuffer(host_topkIdx.data(), refOut.topkIdx.data(),
+                        refOut.topkIdx.size());
 }
 
 TEST(TaskSystemUnittests, refHipGemm) {

@@ -71,8 +71,8 @@ __device__ void Topk8_block(T input, T* __restrict__ out_vals,
     }
   }
 
-  // After the sort: svals[0..255] are in descending order (largest at index 0).
-  // First TOPK threads write results.
+  // After the sort: svals[0.._SIZE] are in descending order (largest at index
+  // 0). First TOPK threads write results.
   if (tid < TOPK) {
     out_vals[tid] = svals[tid];
     out_idx[tid] = sidx[tid];
