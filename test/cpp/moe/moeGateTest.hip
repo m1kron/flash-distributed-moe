@@ -13,21 +13,24 @@ constexpr int N_SIZE = 128;
 constexpr int K_SIZE = 2048;
 constexpr int TOPK = 8;
 constexpr int THREADS = 128;
+constexpr int BLOCKS = 304;
 
 template <typename TGEMM_TILE>
 __global__ void refHipKernel(const float* __restrict__ A,
                              const float* __restrict__ B,
                              float* __restrict__ topkVals,
-                             int* __restrict__ topIdx) {
-  typename TGEMM_TILE::TOutputType out_regs[TGEMM_TILE::THREAD_OUTPUT_SIZE];
-
+                             int* __restrict__ topIdx, int M_SIZE) {
   __shared__ char sharedMemPool[TGEMM_TILE::SHARED_MEM_NEEDES_BYTES];
 
-  GemmTile_block<TGEMM_TILE>(A, B, out_regs, blockIdx.x, blockIdx.y,
-                             sharedMemPool);
-  out_regs[0] = Softmax_block<TGEMM_TILE::THREADS>(out_regs[0], sharedMemPool);
-  Topk8_block<TGEMM_TILE::THREADS>(out_regs[0], topkVals + blockIdx.x * 8,
-                                   topIdx + blockIdx.x * 8, sharedMemPool);
+  for (int tokenIdx = blockIdx.x; tokenIdx < M_SIZE; tokenIdx += gridDim.x) {
+    typename TGEMM_TILE::TOutputType out_regs[TGEMM_TILE::THREAD_OUTPUT_SIZE];
+
+    GemmTile_block<TGEMM_TILE>(A, B, out_regs, tokenIdx, 0, sharedMemPool);
+    out_regs[0] =
+        Softmax_block<TGEMM_TILE::THREADS>(out_regs[0], sharedMemPool);
+    Topk8_block<TGEMM_TILE::THREADS>(out_regs[0], topkVals + tokenIdx * 8,
+                                     topIdx + tokenIdx * 8, sharedMemPool);
+  }
 }
 
 hipError_t refHipGemm(const float* A, const float* B, float* topkVals,
@@ -41,10 +44,11 @@ hipError_t refHipGemm(const float* A, const float* B, float* topkVals,
   using TGemmTileParams =
       GemmTileParams<N_SIZE, K_SIZE, m_tile_size, n_tile_size, 32, THREADS>;
 
-  dim3 grid(M / m_tile_size, N / n_tile_size, 1);
+  dim3 grid(BLOCKS);
   dim3 block(TGemmTileParams::THREADS);
 
-  refHipKernel<TGemmTileParams><<<grid, block, 0, 0>>>(A, B, topkVals, topkIdx);
+  refHipKernel<TGemmTileParams>
+      <<<grid, block, 0, 0>>>(A, B, topkVals, topkIdx, M);
 
   return hipSuccess;
 }
