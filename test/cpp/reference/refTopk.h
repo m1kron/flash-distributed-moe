@@ -16,8 +16,7 @@ namespace test {
 // and index -1.
 template <typename T>
 inline void refTopK8PerRow(const T* input, int rows, int cols, T* out_vals,
-                           int* out_idx) {
-  constexpr int TOPK = 8;
+                           int* out_idx, int TOPK) {
   if (rows == 0) return;
 
   const T neg_inf = std::numeric_limits<T>::lowest();
@@ -26,8 +25,8 @@ inline void refTopK8PerRow(const T* input, int rows, int cols, T* out_vals,
     const T* row = input + r * cols;
 
     // initialize topk arrays (descending order: largest first)
-    T topv[TOPK];
-    int topi[TOPK];
+    std::vector<T> topv(TOPK, 0);
+    std::vector<int> topi(TOPK, 0);
     for (int t = 0; t < TOPK; ++t) {
       topv[t] = neg_inf;
       topi[t] = -1;
