@@ -65,10 +65,7 @@ hipError_t refHipGemm(const float* A, const float* B, float* topkVals,
   return hipSuccess;
 }
 
-template <typename TFunc>
-void PerformGemmCorrectnessTest2(const TFunc func) {
-  // Prepare input buffers for module
-
+TEST(MoeGate, basicTest) {
   constexpr int a_size = M_SIZE * K_SIZE;
   constexpr int b_size = K_SIZE * N_SIZE;
   constexpr int c_size = M_SIZE * N_SIZE;
@@ -94,7 +91,7 @@ void PerformGemmCorrectnessTest2(const TFunc func) {
   HIP_ERROR_ASSERT(hipMemcpy(d_b, host_b.data(), b_size * sizeof(float),
                              hipMemcpyHostToDevice));
   HIP_ERROR_ASSERT(
-      func(d_a, d_b, d_topkVals, d_topkIdx, M_SIZE, N_SIZE, K_SIZE));
+      refHipGemm(d_a, d_b, d_topkVals, d_topkIdx, M_SIZE, N_SIZE, K_SIZE));
 
   HIP_ERROR_ASSERT(hipDeviceSynchronize())
   HIP_ERROR_ASSERT(hipGetLastError());
@@ -117,8 +114,4 @@ void PerformGemmCorrectnessTest2(const TFunc func) {
                         refOut.topkVals.size());
   CheckAgainstRefBuffer(host_topkIdx.data(), refOut.topkIdx.data(),
                         refOut.topkIdx.size());
-}
-
-TEST(TaskSystemUnittests, refHipGemm) {
-  PerformGemmCorrectnessTest2(refHipGemm);
 }
