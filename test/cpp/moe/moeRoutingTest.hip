@@ -86,6 +86,7 @@ __global__ void refRoutingKernel(const float* __restrict__ tokens,
       topIdx[tokenIdx * 8 + tid] = s_topkIdx[tid];
     }
 
+    // Warp 0 pushes all the tasks...
     for (int i = 0; i < TOPK; ++i) {
       ExpertTileTask rTask;
       rTask.expertWeights = nullptr;
@@ -145,11 +146,12 @@ __global__ void refRoutingKernel(const float* __restrict__ tokens,
   }
 }
 
-hipError_t refHipRouting(const float* A, const float* B, float* topkVals,
-                         int* topkIdx, int M, int N, int K) {
-  assert(K == HIDDEN_SIZE);
-  assert(M == TOKENS_NUM);
-  assert(N == EXPERTS_NUM);
+hipError_t refHipRouting(const float* tokens, const float* gateWeights,
+                         float* topkVals, int* topkIdx, int tokensNum,
+                         int expertsNum, int hiddenSize) {
+  assert(hiddenSize == HIDDEN_SIZE);
+  assert(tokensNum == TOKENS_NUM);
+  assert(expertsNum == EXPERTS_NUM);
 
   dim3 grid(BLOCKS);
   dim3 block(TGateGemmTileParams::THREADS);
@@ -164,8 +166,8 @@ hipError_t refHipRouting(const float* A, const float* B, float* topkVals,
                                          &managerHost, sizeof(TaskManagerType),
                                          0, hipMemcpyHostToDevice, stream));
 
-  refRoutingKernel<TGateGemmTileParams>
-      <<<grid, block, 0, 0>>>(A, B, topkVals, topkIdx, M);
+  refRoutingKernel<TGateGemmTileParams><<<grid, block, 0, 0>>>(
+      tokens, gateWeights, topkVals, topkIdx, tokensNum);
 
   HIP_ERROR_CHECK(managerHost.Deinit(stream));
 
