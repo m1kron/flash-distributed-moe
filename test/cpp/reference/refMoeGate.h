@@ -10,18 +10,23 @@ struct MoeGateOutput {
   std::vector<int> topkIdx;
 };
 
+// tokens -> [tokensNum, hiddenSize]
+// gateWeights -> [hiddenSize, expertsNum]
+// out -> 2x [tokensNum, topk]
 template <typename T>
-inline MoeGateOutput refMoeGate(const T* A, const T* B, int M, int N, int K,
+inline MoeGateOutput refMoeGate(const T* tokens, const T* gateWeights,
+                                int tokensNum, int expertsNum, int hiddenSize,
                                 int topk) {
-  auto ref = test::refGemm(A, B, M, N, K);
+  auto ref =
+      test::refGemm(tokens, gateWeights, tokensNum, expertsNum, hiddenSize);
 
-  test::refSoftmaxRowOnlineInplace(ref.data(), M, N);
+  test::refSoftmaxRowOnlineInplace(ref.data(), tokensNum, expertsNum);
 
   MoeGateOutput out;
-  out.topkIdx.resize(topk * M);
-  out.topkVals.resize(topk * M);
+  out.topkIdx.resize(topk * tokensNum);
+  out.topkVals.resize(topk * tokensNum);
 
-  test::refTopK8PerRow(ref.data(), M, N, out.topkVals.data(),
+  test::refTopK8PerRow(ref.data(), tokensNum, expertsNum, out.topkVals.data(),
                        out.topkIdx.data(), topk);
 
   return out;
