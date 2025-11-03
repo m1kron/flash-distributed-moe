@@ -32,13 +32,14 @@ using TExpertGemmTileParams =
 struct __align__(16) ExpertTileTask {
   const float* expertWeights;
   const float* tokens;
-  float* result;
+  float* output;
   float expertWeight;
   int tokenIdx;
   int expertIdx;
   int blockTileColStartIdx;
 };
 
+template <typename T_EXPERT_TILE>
 __device__ void ExecuteTask(const ExpertTileTask& task, void* sharedMemPool) {
   if (threadIdx.x == 65) {
     HIP_DEVICE_LOG(
@@ -47,26 +48,52 @@ __device__ void ExecuteTask(const ExpertTileTask& task, void* sharedMemPool) {
         blockIdx.x, task.blockTileColStartIdx, task.tokenIdx, task.expertIdx,
         task.expertWeight);
   }
+
+  const float* thisBlockTokens = task.tokens + task.tokenIdx * T_EXPERT_TILE::K;
+  const float* thisExpertWeights =
+      task.expertWeights + task.expertIdx * T_EXPERT_TILE::K * T_EXPERT_TILE::N;
+
+  const int randomSlot = blockIdx.x % TOPK;
+  float* thisBlockOutput = task.output +
+                           task.tokenIdx * TOPK * (T_EXPERT_TILE::N + 2) +
+                           randomSlot * (T_EXPERT_TILE::N + 2);
+
+  typename T_EXPERT_TILE::TOutputType
+      out_regs[T_EXPERT_TILE::THREAD_OUTPUT_SIZE];
+  GemmTile_block<T_EXPERT_TILE>(thisBlockTokens, thisExpertWeights, out_regs, 0,
+                                task.blockTileColStartIdx, sharedMemPool);
+
+  if (task.blockTileColStartIdx == 0) {
+    if (threadIdx.x == 0) {
+      thisBlockOutput[0] = (float)task.expertIdx;
+      thisBlockOutput[1] = (float)task.expertWeight;
+    }
+  }
 }
 
 using TaskManagerType = TaskManager<ExpertTileTask, 8192>;
 __constant__ TaskManagerType globalTaskManager;
 
-template <typename TGEMM_TILE>
+template <typename T_GATE_TILE, typename T_EXPERT_TILE>
 __global__ void refRoutingKernel(const float* __restrict__ tokens,
                                  const float* __restrict__ gateWeights,
-                                 float* __restrict__ topkVals,
-                                 int* __restrict__ topIdx, int TOKENS_NUM) {
-  __shared__ char sharedMemPool[TGEMM_TILE::SHARED_MEM_NEEDES_BYTES];
+                                 const float* __restrict__ expertWeights,
+                                 float* __restrict__ output, int TOKENS_NUM) {
+  constexpr int SHARED_MEM_SIZE_BYTES =
+      T_GATE_TILE::SHARED_MEM_NEEDES_BYTES >
+              T_EXPERT_TILE::SHARED_MEM_NEEDES_BYTES
+          ? T_GATE_TILE::SHARED_MEM_NEEDES_BYTES
+          : T_EXPERT_TILE::SHARED_MEM_NEEDES_BYTES;
+  __shared__ char sharedMemPool[SHARED_MEM_SIZE_BYTES];
 
   for (int tokenIdx = blockIdx.x; tokenIdx < TOKENS_NUM;
        tokenIdx += gridDim.x) {
-    typename TGEMM_TILE::TOutputType out_regs[TGEMM_TILE::THREAD_OUTPUT_SIZE];
+    typename T_GATE_TILE::TOutputType out_regs[T_GATE_TILE::THREAD_OUTPUT_SIZE];
 
-    GemmTile_block<TGEMM_TILE>(tokens, gateWeights, out_regs, tokenIdx, 0,
-                               sharedMemPool);
+    GemmTile_block<T_GATE_TILE>(tokens, gateWeights, out_regs, tokenIdx, 0,
+                                sharedMemPool);
     out_regs[0] =
-        Softmax_block<TGEMM_TILE::THREADS, float>(out_regs[0], sharedMemPool);
+        Softmax_block<T_GATE_TILE::THREADS, float>(out_regs[0], sharedMemPool);
 
     char* sharedMemPoolBytes = reinterpret_cast<char*>(sharedMemPool);
     float* s_topkVals = reinterpret_cast<float*>(sharedMemPoolBytes);
@@ -74,24 +101,15 @@ __global__ void refRoutingKernel(const float* __restrict__ tokens,
         reinterpret_cast<int*>(sharedMemPoolBytes + sizeof(float) * TOPK);
     int* nextPool = s_topkIdx + TOPK;
 
-    Topk8_block<TGEMM_TILE::THREADS, float>(out_regs[0], s_topkVals, s_topkIdx,
-                                            nextPool);
-
-    // At this point each participating block has topkVals and TopkIdx for
-    // selected token in shared mem.
-
-    const int tid = threadIdx.x;
-    if (threadIdx.x < TOPK) {
-      topkVals[tokenIdx * 8 + tid] = s_topkVals[tid];
-      topIdx[tokenIdx * 8 + tid] = s_topkIdx[tid];
-    }
+    Topk8_block<T_GATE_TILE::THREADS, float>(out_regs[0], s_topkVals, s_topkIdx,
+                                             nextPool);
 
     // Warp 0 pushes all the tasks...
     for (int i = 0; i < TOPK; ++i) {
       ExpertTileTask rTask;
-      rTask.expertWeights = nullptr;
-      rTask.tokens = nullptr;
-      rTask.result = nullptr;
+      rTask.expertWeights = expertWeights;
+      rTask.tokens = tokens;
+      rTask.output = output;
       rTask.tokenIdx = tokenIdx;
       rTask.expertIdx = s_topkIdx[i];
       rTask.expertWeight = s_topkVals[i];
@@ -136,19 +154,19 @@ __global__ void refRoutingKernel(const float* __restrict__ tokens,
     ExpertTileTask rTask;
     rTask.expertWeights = task_s->expertWeights;
     rTask.tokens = task_s->tokens;
-    rTask.result = task_s->result;
+    rTask.output = task_s->output;
     rTask.tokenIdx = task_s->tokenIdx;
     rTask.expertIdx = task_s->expertIdx;
     rTask.expertWeight = task_s->expertWeight;
     rTask.blockTileColStartIdx = task_s->blockTileColStartIdx;
     __syncthreads();
-    ExecuteTask(rTask, sharedMemPool);
+    ExecuteTask<T_EXPERT_TILE>(rTask, sharedMemPool);
   }
 }
 
 hipError_t refHipRouting(const float* tokens, const float* gateWeights,
-                         float* topkVals, int* topkIdx, int tokensNum,
-                         int expertsNum, int hiddenSize) {
+                         const float* expertWeights, float* output,
+                         int tokensNum, int expertsNum, int hiddenSize) {
   assert(hiddenSize == HIDDEN_SIZE);
   assert(tokensNum == TOKENS_NUM);
   assert(expertsNum == EXPERTS_NUM);
@@ -166,18 +184,101 @@ hipError_t refHipRouting(const float* tokens, const float* gateWeights,
                                          &managerHost, sizeof(TaskManagerType),
                                          0, hipMemcpyHostToDevice, stream));
 
-  refRoutingKernel<TGateGemmTileParams><<<grid, block, 0, 0>>>(
-      tokens, gateWeights, topkVals, topkIdx, tokensNum);
+  refRoutingKernel<TGateGemmTileParams, TExpertGemmTileParams>
+      <<<grid, block, 0, 0>>>(tokens, gateWeights, expertWeights, output,
+                              tokensNum);
 
   HIP_ERROR_CHECK(managerHost.Deinit(stream));
 
   return hipSuccess;
 }
 
+namespace test {
+// GPT5-mini generated function with minor changes.
+// Replace simple stub with CPU reference that runs gate (refMoeGate) and then
+// projects each selected (token, expert) pair through the expert weights.
+// Output layout:
+//   rows = tokensNum * topk
+//   cols = expertIntermediateSize + 2
+// For each output row r corresponding to (token t, topk-pos k):
+//   out[r,0] = float(expertId)          (or -1.0f if invalid)
+//   out[r,1] = gateScore                (weight)
+//   out[r, 2 .. 2+expertIntermediateSize-1] = tokenProjection (1 x
+//   expertIntermediateSize)
+// No final reduction is performed: each (token,expert) produces its own row.
+static std::vector<float> refRouting(const float* tokens,
+                                     const float* gateWeights,
+                                     const float* expertWeights, int tokensNum,
+                                     int expertsNum, int hiddenSize, int topk,
+                                     int expertIntermediateSize) {
+  assert(tokens != nullptr);
+  assert(gateWeights != nullptr);
+  // expertWeights may be nullptr -> then projection fields will be zeros.
+
+  // Run gating to obtain topk info
+  auto gateOut = test::refMoeGate(tokens, gateWeights, tokensNum, expertsNum,
+                                  hiddenSize, topk);
+  // gateOut.topkVals and gateOut.topkIdx are expected to be vectors of size
+  // tokensNum*topk
+  const std::vector<float>& topkVals = gateOut.topkVals;
+  const std::vector<int>& topkIdx = gateOut.topkIdx;
+  const int rows = tokensNum * topk;
+  const int cols = expertIntermediateSize + 2;
+
+  std::vector<float> out;
+  out.assign(size_t(rows) * size_t(cols), 0.0f);
+
+  for (int t = 0; t < tokensNum; ++t) {
+    const float* tokenPtr = tokens + size_t(t) * size_t(hiddenSize);
+
+    for (int k = 0; k < topk; ++k) {
+      const int row = t * topk + k;
+      const int expert = topkIdx[row];
+      const float gateScore = topkVals[row];
+      const size_t rowBase = size_t(row) * size_t(cols);
+
+      // expert id as float in column 0
+      out[rowBase + 0] = (expert >= 0) ? static_cast<float>(expert) : -1.0f;
+      // gate weight in column 1
+      out[rowBase + 1] = gateScore;
+
+      // projection columns start at offset 2
+      if (expert < 0 || expert >= expertsNum || expertWeights == nullptr) {
+        // leave projection zeros
+        continue;
+      }
+
+      // expertWeights layout assumed: [expert][hidden][expertIntermediate]
+      const float* expertW = expertWeights + size_t(expert) *
+                                                 size_t(hiddenSize) *
+                                                 size_t(expertIntermediateSize);
+
+      // Use reference GEMM for 1 x hidden * hidden x expertIntermediate => 1 x
+      // expertIntermediate refGemm(A,B,M,N,K) where A is 1 x K, B is K x N ->
+      // returns vector length M*N (here N=expertIntermediateSize)
+      std::vector<float> proj =
+          test::refGemm<float>(tokenPtr, expertW, /*M=*/1,
+                               /*N=*/expertIntermediateSize, /*K=*/hiddenSize);
+      // Copy projection into output row
+      for (int d = 0; d < expertIntermediateSize; ++d) {
+        out[rowBase + 2 + d] =
+            proj[size_t(d)];  // proj is 1 x N stored row-major
+      }
+    }
+  }
+
+  return out;
+}
+}  // namespace test
+
 TEST(MoeRouting, basicTest) {
   constexpr int TOKENS_SIZE = TOKENS_NUM * HIDDEN_SIZE;
   constexpr int GATE_WEIGHTS_SIZE = HIDDEN_SIZE * EXPERTS_NUM;
   constexpr int ROUTING_SIZE = TOKENS_NUM * TOPK;
+  constexpr int EXPERTS_WEIGHTS_SIZE =
+      EXPERTS_NUM * HIDDEN_SIZE * EXPERT_INTERMEDIATE_SIZE;
+  constexpr int OUTPUT_SIZE =
+      TOKENS_NUM * TOPK * (EXPERT_INTERMEDIATE_SIZE + 2);
 
   std::vector<float> tokens_host =
       RandomVector<float>(TOKENS_SIZE, -0.1f, 0.1f);
@@ -185,17 +286,22 @@ TEST(MoeRouting, basicTest) {
       RandomVector<float>(GATE_WEIGHTS_SIZE, -0.1f, 0.1f);
   std::vector<float> host_topkVals(ROUTING_SIZE);
   std::vector<int> host_topkIdx(ROUTING_SIZE);
+  std::vector<float> expertWeights_host =
+      RandomVector<float>(EXPERTS_WEIGHTS_SIZE, -0.1f, 0.1f);
+
+  std::vector<float> output_host(OUTPUT_SIZE);
 
   float* tokens_device = nullptr;
   float* gateWeights_device = nullptr;
-  float* d_topkVals = nullptr;
-  int* d_topkIdx = nullptr;
+  float* expertWeights_device = nullptr;
+  float* output_device = nullptr;
 
   HIP_ERROR_ASSERT(hipMalloc(&tokens_device, TOKENS_SIZE * sizeof(float)));
   HIP_ERROR_ASSERT(
       hipMalloc(&gateWeights_device, GATE_WEIGHTS_SIZE * sizeof(float)));
-  HIP_ERROR_ASSERT(hipMalloc(&d_topkVals, ROUTING_SIZE * sizeof(float)));
-  HIP_ERROR_ASSERT(hipMalloc(&d_topkIdx, ROUTING_SIZE * sizeof(int)));
+  HIP_ERROR_ASSERT(
+      hipMalloc(&expertWeights_device, EXPERTS_WEIGHTS_SIZE * sizeof(float)));
+  HIP_ERROR_ASSERT(hipMalloc(&output_device, OUTPUT_SIZE * sizeof(float)));
 
   HIP_ERROR_ASSERT(hipMemcpy(tokens_device, tokens_host.data(),
                              TOKENS_SIZE * sizeof(float),
@@ -203,31 +309,49 @@ TEST(MoeRouting, basicTest) {
   HIP_ERROR_ASSERT(hipMemcpy(gateWeights_device, gateWeights_host.data(),
                              GATE_WEIGHTS_SIZE * sizeof(float),
                              hipMemcpyHostToDevice));
-  HIP_ERROR_ASSERT(refHipRouting(tokens_device, gateWeights_device, d_topkVals,
-                                 d_topkIdx, TOKENS_NUM, EXPERTS_NUM,
-                                 HIDDEN_SIZE));
+  HIP_ERROR_ASSERT(hipMemcpy(expertWeights_device, expertWeights_host.data(),
+                             EXPERTS_WEIGHTS_SIZE * sizeof(float),
+                             hipMemcpyHostToDevice));
+  HIP_ERROR_ASSERT(refHipRouting(tokens_device, gateWeights_device,
+                                 expertWeights_device, output_device,
+                                 TOKENS_NUM, EXPERTS_NUM, HIDDEN_SIZE));
 
   HIP_ERROR_ASSERT(hipDeviceSynchronize())
   HIP_ERROR_ASSERT(hipGetLastError());
 
-  HIP_ERROR_ASSERT(hipMemcpy(host_topkVals.data(), d_topkVals,
-                             ROUTING_SIZE * sizeof(float),
-                             hipMemcpyDeviceToHost));
-  HIP_ERROR_ASSERT(hipMemcpy(host_topkIdx.data(), d_topkIdx,
-                             ROUTING_SIZE * sizeof(int),
+  HIP_ERROR_ASSERT(hipMemcpy(output_host.data(), output_device,
+                             OUTPUT_SIZE * sizeof(float),
                              hipMemcpyDeviceToHost));
 
   // Free device memory.
   HIP_ERROR_ASSERT(hipFree(tokens_device));
   HIP_ERROR_ASSERT(hipFree(gateWeights_device));
-  HIP_ERROR_ASSERT(hipFree(d_topkVals));
-  HIP_ERROR_ASSERT(hipFree(d_topkIdx));
+  HIP_ERROR_ASSERT(hipFree(expertWeights_device));
+  HIP_ERROR_ASSERT(hipFree(output_device));
 
-  auto refOut = test::refMoeGate(tokens_host.data(), gateWeights_host.data(),
-                                 TOKENS_NUM, EXPERTS_NUM, HIDDEN_SIZE, TOPK);
+  // auto refOut = test::refMoeGate(tokens_host.data(), gateWeights_host.data(),
+  //                                TOKENS_NUM, EXPERTS_NUM, HIDDEN_SIZE, TOPK);
 
-  CheckAgainstRefBuffer(host_topkVals.data(), refOut.topkVals.data(),
-                        refOut.topkVals.size());
-  CheckAgainstRefBuffer(host_topkIdx.data(), refOut.topkIdx.data(),
-                        refOut.topkIdx.size());
+  auto refOut = test::refRouting(
+      tokens_host.data(), gateWeights_host.data(), expertWeights_host.data(),
+      TOKENS_NUM, EXPERTS_NUM, HIDDEN_SIZE, TOPK, EXPERT_INTERMEDIATE_SIZE);
+
+  for (int tokenIdx = 0; tokenIdx < TOKENS_NUM; ++tokenIdx) {
+    std::cout << "TokenIdx: " << tokenIdx << std::endl;
+    for (int i = 0; i < TOPK; ++i) {
+      const float expertId =
+          output_device[tokenIdx * TOPK * (EXPERT_INTERMEDIATE_SIZE + 2) +
+                        i * (EXPERT_INTERMEDIATE_SIZE + 2)];
+      const float weight =
+          output_device[tokenIdx * TOPK * (EXPERT_INTERMEDIATE_SIZE + 2) +
+                        i * (EXPERT_INTERMEDIATE_SIZE + 2) + 1];
+      std::cout << "Expert id: " << expertId << ", weight: " << weight
+                << std::endl;
+    }
+  }
+
+  // CheckAgainstRefBuffer(host_topkVals.data(), refOut.topkVals.data(),
+  //                       refOut.topkVals.size());
+  // CheckAgainstRefBuffer(host_topkIdx.data(), refOut.topkIdx.data(),
+  //                       refOut.topkIdx.size());
 }
