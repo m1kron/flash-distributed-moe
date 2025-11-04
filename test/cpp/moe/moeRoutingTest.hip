@@ -37,7 +37,11 @@ struct __align__(16) ExpertTileTask {
   int tokenIdx;
   int expertIdx;
   int blockTileColStartIdx;
+  int topkSlotIdx;
 };
+
+using TaskManagerType = TaskManager<ExpertTileTask, 8192>;
+__constant__ TaskManagerType globalTaskManager;
 
 template <typename T_EXPERT_TILE>
 __device__ void ExecuteTask(const ExpertTileTask& task, void* sharedMemPool) {
@@ -53,15 +57,14 @@ __device__ void ExecuteTask(const ExpertTileTask& task, void* sharedMemPool) {
   const float* thisExpertWeights =
       task.expertWeights + task.expertIdx * T_EXPERT_TILE::K * T_EXPERT_TILE::N;
 
-  const int randomSlot = blockIdx.x % TOPK;
-  float* thisBlockOutput = task.output +
-                           task.tokenIdx * TOPK * (T_EXPERT_TILE::N + 2) +
-                           randomSlot * (T_EXPERT_TILE::N + 2);
-
   typename T_EXPERT_TILE::TOutputType
       out_regs[T_EXPERT_TILE::THREAD_OUTPUT_SIZE];
   GemmTile_block<T_EXPERT_TILE>(thisBlockTokens, thisExpertWeights, out_regs, 0,
                                 task.blockTileColStartIdx, sharedMemPool);
+
+  float* thisBlockOutput = task.output +
+                           task.tokenIdx * TOPK * (T_EXPERT_TILE::N + 2) +
+                           task.topkSlotIdx * (T_EXPERT_TILE::N + 2);
 
   if (task.blockTileColStartIdx == 0) {
     if (threadIdx.x == 0) {
@@ -69,10 +72,12 @@ __device__ void ExecuteTask(const ExpertTileTask& task, void* sharedMemPool) {
       thisBlockOutput[1] = (float)task.expertWeight;
     }
   }
-}
 
-using TaskManagerType = TaskManager<ExpertTileTask, 8192>;
-__constant__ TaskManagerType globalTaskManager;
+  thisBlockOutput += 2;
+
+  WriteGemmTileToGlobalMem_block<T_EXPERT_TILE>(out_regs, thisBlockOutput, 0,
+                                                task.blockTileColStartIdx);
+}
 
 template <typename T_GATE_TILE, typename T_EXPERT_TILE>
 __global__ void refRoutingKernel(const float* __restrict__ tokens,
@@ -114,6 +119,7 @@ __global__ void refRoutingKernel(const float* __restrict__ tokens,
       rTask.expertIdx = s_topkIdx[i];
       rTask.expertWeight = s_topkVals[i];
       rTask.blockTileColStartIdx = 0;
+      rTask.topkSlotIdx = i;
 
       globalTaskManager.PushTask_warp(&rTask);
 
@@ -151,14 +157,7 @@ __global__ void refRoutingKernel(const float* __restrict__ tokens,
     }
 
     // Block cooperatively execute task:
-    ExpertTileTask rTask;
-    rTask.expertWeights = task_s->expertWeights;
-    rTask.tokens = task_s->tokens;
-    rTask.output = task_s->output;
-    rTask.tokenIdx = task_s->tokenIdx;
-    rTask.expertIdx = task_s->expertIdx;
-    rTask.expertWeight = task_s->expertWeight;
-    rTask.blockTileColStartIdx = task_s->blockTileColStartIdx;
+    ExpertTileTask rTask = *task_s;
     __syncthreads();
     ExecuteTask<T_EXPERT_TILE>(rTask, sharedMemPool);
   }
@@ -269,6 +268,62 @@ static std::vector<float> refRouting(const float* tokens,
 
   return out;
 }
+
+// GPU generates unsorted data within given topk bucket, sort it against expert
+// weight. GPT5-mini generated code with my minor changes.
+void sortResultData(float* data) {
+  // data layout: TOKENS_NUM x TOPK x (EXPERT_INTERMEDIATE_SIZE + 2)
+  const int tokens = TOKENS_NUM;
+  const int rows_per_token = TOPK;
+  const int cols = EXPERT_INTERMEDIATE_SIZE + 2;
+
+  // temporary buffer for swapping rows
+  std::vector<float> tmp(cols);
+
+  for (int t = 0; t < tokens; ++t) {
+    float* token_base = data + size_t(t) * rows_per_token * cols;
+
+    // Insertion sort descending by weight (weight is at column offset 1)
+    for (int i = 1; i < rows_per_token; ++i) {
+      int j = i;
+      while (j > 0) {
+        float w_prev = token_base[(j - 1) * cols + 1];
+        float w_cur = token_base[j * cols + 1];
+        if (w_prev >= w_cur) break;  // already in order (descending)
+        // swap rows (j-1) and j
+        float* rprev = token_base + (j - 1) * cols;
+        float* rcur = token_base + j * cols;
+        std::memcpy(tmp.data(), rprev, cols * sizeof(float));
+        std::memcpy(rprev, rcur, cols * sizeof(float));
+        std::memcpy(rcur, tmp.data(), cols * sizeof(float));
+        --j;
+      }
+    }
+  }
+}
+
+void printResult(const float* result) {
+  for (int tokenIdx = 0; tokenIdx < TOKENS_NUM; ++tokenIdx) {
+    std::cout << "TokenIdx: " << tokenIdx << std::endl;
+    for (int i = 0; i < TOPK; ++i) {
+      const float expertId =
+          result[tokenIdx * TOPK * (EXPERT_INTERMEDIATE_SIZE + 2) +
+                 i * (EXPERT_INTERMEDIATE_SIZE + 2)];
+      const float weight =
+          result[tokenIdx * TOPK * (EXPERT_INTERMEDIATE_SIZE + 2) +
+                 i * (EXPERT_INTERMEDIATE_SIZE + 2) + 1];
+      std::cout << "Expert id: " << expertId << ", weight: " << weight;
+
+      for (int i = 2; i < 10; ++i) {
+        std::cout << "|"
+                  << result[tokenIdx * TOPK * (EXPERT_INTERMEDIATE_SIZE + 2) +
+                            i * (EXPERT_INTERMEDIATE_SIZE + 2) + i];
+      }
+
+      std::cout << std::endl;
+    }
+  }
+}
 }  // namespace test
 
 TEST(MoeRouting, basicTest) {
@@ -289,7 +344,7 @@ TEST(MoeRouting, basicTest) {
   std::vector<float> expertWeights_host =
       RandomVector<float>(EXPERTS_WEIGHTS_SIZE, -0.1f, 0.1f);
 
-  std::vector<float> output_host(OUTPUT_SIZE);
+  std::vector<float> output_host(OUTPUT_SIZE, 0.0f);
 
   float* tokens_device = nullptr;
   float* gateWeights_device = nullptr;
@@ -329,29 +384,13 @@ TEST(MoeRouting, basicTest) {
   HIP_ERROR_ASSERT(hipFree(expertWeights_device));
   HIP_ERROR_ASSERT(hipFree(output_device));
 
-  // auto refOut = test::refMoeGate(tokens_host.data(), gateWeights_host.data(),
-  //                                TOKENS_NUM, EXPERTS_NUM, HIDDEN_SIZE, TOPK);
-
   auto refOut = test::refRouting(
       tokens_host.data(), gateWeights_host.data(), expertWeights_host.data(),
       TOKENS_NUM, EXPERTS_NUM, HIDDEN_SIZE, TOPK, EXPERT_INTERMEDIATE_SIZE);
 
-  for (int tokenIdx = 0; tokenIdx < TOKENS_NUM; ++tokenIdx) {
-    std::cout << "TokenIdx: " << tokenIdx << std::endl;
-    for (int i = 0; i < TOPK; ++i) {
-      const float expertId =
-          output_device[tokenIdx * TOPK * (EXPERT_INTERMEDIATE_SIZE + 2) +
-                        i * (EXPERT_INTERMEDIATE_SIZE + 2)];
-      const float weight =
-          output_device[tokenIdx * TOPK * (EXPERT_INTERMEDIATE_SIZE + 2) +
-                        i * (EXPERT_INTERMEDIATE_SIZE + 2) + 1];
-      std::cout << "Expert id: " << expertId << ", weight: " << weight
-                << std::endl;
-    }
-  }
+  test::sortResultData(output_host.data());
 
-  // CheckAgainstRefBuffer(host_topkVals.data(), refOut.topkVals.data(),
-  //                       refOut.topkVals.size());
-  // CheckAgainstRefBuffer(host_topkIdx.data(), refOut.topkIdx.data(),
-  //                       refOut.topkIdx.size());
+  // test::printResult(output_host.data());
+
+  CheckAgainstRefBuffer(output_host.data(), refOut.data(), refOut.size());
 }
