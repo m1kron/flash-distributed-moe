@@ -28,7 +28,7 @@ constexpr int EXPERT_TILE_SIZE = 256;
 using TExpertGemmTileParams =
     GemmTileParams<EXPERT_INTERMEDIATE_SIZE, HIDDEN_SIZE, 1, EXPERT_TILE_SIZE,
                    32, THREADS>;
-
+namespace test {
 struct __align__(16) ExpertTileTask {
   const float* expertWeights;
   const float* tokens;
@@ -163,9 +163,9 @@ __global__ void refRoutingKernel(const float* __restrict__ tokens,
   }
 }
 
-hipError_t refHipRouting(const float* tokens, const float* gateWeights,
-                         const float* expertWeights, float* output,
-                         int tokensNum, int expertsNum, int hiddenSize) {
+static hipError_t refHipRouting(const float* tokens, const float* gateWeights,
+                                const float* expertWeights, float* output,
+                                int tokensNum, int expertsNum, int hiddenSize) {
   assert(hiddenSize == HIDDEN_SIZE);
   assert(tokensNum == TOKENS_NUM);
   assert(expertsNum == EXPERTS_NUM);
@@ -192,7 +192,6 @@ hipError_t refHipRouting(const float* tokens, const float* gateWeights,
   return hipSuccess;
 }
 
-namespace test {
 // GPT5-mini generated function with minor changes.
 // Replace simple stub with CPU reference that runs gate (refMoeGate) and then
 // projects each selected (token, expert) pair through the expert weights.
@@ -271,7 +270,7 @@ static std::vector<float> refRouting(const float* tokens,
 
 // GPU generates unsorted data within given topk bucket, sort it against expert
 // weight. GPT5-mini generated code with my minor changes.
-void sortResultData(float* data) {
+static void sortResultData(float* data) {
   // data layout: TOKENS_NUM x TOPK x (EXPERT_INTERMEDIATE_SIZE + 2)
   const int tokens = TOKENS_NUM;
   const int rows_per_token = TOPK;
@@ -302,7 +301,7 @@ void sortResultData(float* data) {
   }
 }
 
-void printResult(const float* result) {
+static void printResult(const float* result) {
   for (int tokenIdx = 0; tokenIdx < TOKENS_NUM; ++tokenIdx) {
     std::cout << "TokenIdx: " << tokenIdx << std::endl;
     for (int i = 0; i < TOPK; ++i) {
@@ -367,9 +366,9 @@ TEST(MoeRouting, basicTest) {
   HIP_ERROR_ASSERT(hipMemcpy(expertWeights_device, expertWeights_host.data(),
                              EXPERTS_WEIGHTS_SIZE * sizeof(float),
                              hipMemcpyHostToDevice));
-  HIP_ERROR_ASSERT(refHipRouting(tokens_device, gateWeights_device,
-                                 expertWeights_device, output_device,
-                                 TOKENS_NUM, EXPERTS_NUM, HIDDEN_SIZE));
+  HIP_ERROR_ASSERT(test::refHipRouting(tokens_device, gateWeights_device,
+                                       expertWeights_device, output_device,
+                                       TOKENS_NUM, EXPERTS_NUM, HIDDEN_SIZE));
 
   HIP_ERROR_ASSERT(hipDeviceSynchronize())
   HIP_ERROR_ASSERT(hipGetLastError());
