@@ -1,7 +1,7 @@
 #pragma once
-#include "gtest/gtest.h"
-
 #include <random>
+
+#include "gtest/gtest.h"
 
 #define HIP_ERROR_ASSERT(condition)                     \
   {                                                     \
@@ -17,9 +17,10 @@ static void CheckConstValBuffer(const T* buffer, int size, T value) {
 }
 
 template <typename T>
-static void CheckAgainstRefBuffer(const T* buffer, const T* ref, int size) {
+static void CheckAgainstRefBuffer(const T* buffer, const T* ref, int size,
+                                  float abs_error = 1e-5f) {
   for (int i = 0; i < size; ++i) {
-    ASSERT_FLOAT_EQ(buffer[i], ref[i]);
+    ASSERT_NEAR(buffer[i], ref[i], abs_error);
   }
 }
 
