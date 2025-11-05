@@ -2,6 +2,7 @@
 
 #include "../../../../src/hip/hipHostCommon.h"
 #include "../../../../src/hip/taskSystem/taskManager.h"
+#include "../../../../src/hip/taskSystem/workerLoop.h"
 #include "../../../../src/hip/utils/hipDeviceUtils.h"
 #include "taskSystemGemmKernel.h"
 #include "tileGemm.h"
@@ -44,36 +45,8 @@ __global__ void taskSystemGemmKernel(const float* __restrict__ A,
     globalTaskManager.PushTask_warp(&rTask);
   }
 
-  __syncthreads();
-
-  while (true) {
-    if (threadIdx.x == 65 || threadIdx.x == 1) {
-      HIP_DEVICE_LOG("Consumer: Before pop task loop\n");
-    }
-    bool* shouldExitNow_s = reinterpret_cast<bool*>(sharedMemPool);
-    GemmTileTask* task_s =
-        reinterpret_cast<GemmTileTask*>(sharedMemPool + sizeof(bool));
-    // Get new task:
-    const bool noMoreTasks = globalTaskManager.WaitAndPopTask_warp(task_s);
-    if (threadIdx.x == 0) {
-      *shouldExitNow_s = noMoreTasks;
-    }
-
-    __syncthreads();
-    if (*shouldExitNow_s) {
-      break;
-    }
-
-    // Block cooperatively execute task:
-    GemmTileTask rTask;
-    rTask.A = task_s->A;
-    rTask.B = task_s->B;
-    rTask.C = task_s->C;
-    rTask.blockTileRowStartIdx = task_s->blockTileRowStartIdx;
-    rTask.blockTileColStartIdx = task_s->blockTileColStartIdx;
-    __syncthreads();
-    ExecuteTask<TestTile>(rTask, sharedMemPool);
-  }
+  workerTaskSystemLoop_block(globalTaskManager, ExecuteTask<TestTile>,
+                             sharedMemPool);
 }
 
 hipError_t taskSystemGemm(const float* A, const float* B, float* C, int M,

@@ -11,6 +11,8 @@
 
 template <typename TTask, unsigned int SIZE>
 struct TaskManager {
+  using TTaskType = TTask;
+
   // Initializes task manager on host.
   __host__ hipError_t Init(hipStream_t stream, unsigned expectedMaxTasks);
 
