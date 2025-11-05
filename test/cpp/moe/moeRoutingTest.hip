@@ -2,6 +2,7 @@
 
 #include "../../../src/hip/hipHostCommon.h"
 #include "../../../src/hip/taskSystem/taskManager.h"
+#include "../../../src/hip/taskSystem/workerLoop.h"
 #include "../../../src/hip/tasks/internal/gemmTileBlock.h"
 #include "../../../src/hip/tasks/internal/softmaxBlock.h"
 #include "../../../src/hip/tasks/internal/topkBlock.h"
@@ -133,34 +134,8 @@ __global__ void refRoutingKernel(const float* __restrict__ tokens,
     }
   }
 
-  // Tokens dispatched to workers.
-  __syncthreads();
-
-  while (true) {
-    bool* shouldExitNow_s = reinterpret_cast<bool*>(sharedMemPool);
-    ExpertTileTask* task_s =
-        reinterpret_cast<ExpertTileTask*>(sharedMemPool + sizeof(bool));
-    // Get new task:
-    const bool noMoreTasks = globalTaskManager.WaitAndPopTask_warp(task_s);
-
-    if (threadIdx.x == 112) {
-      HIP_DEVICE_LOG("Worker: Got new task\n");
-    }
-
-    if (threadIdx.x == 0) {
-      *shouldExitNow_s = noMoreTasks;
-    }
-
-    __syncthreads();
-    if (*shouldExitNow_s) {
-      break;
-    }
-
-    // Block cooperatively execute task:
-    ExpertTileTask rTask = *task_s;
-    __syncthreads();
-    ExecuteTask<T_EXPERT_TILE>(rTask, sharedMemPool);
-  }
+  workerTaskSystemLoop_block(globalTaskManager, ExecuteTask<T_EXPERT_TILE>,
+                             sharedMemPool);
 }
 
 static hipError_t refHipRouting(const float* tokens, const float* gateWeights,
