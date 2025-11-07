@@ -10,6 +10,7 @@
 #include "../reference/refMoeGate.h"
 #include "../utils/utils.h"
 
+namespace {
 constexpr int TOKENS_NUM = 48;
 constexpr int EXPERTS_NUM = 128;
 constexpr int HIDDEN_SIZE = 2048;
@@ -29,7 +30,6 @@ constexpr int EXPERT_TILE_SIZE = 256;
 using TExpertGemmTileParams =
     GemmTileParams<EXPERT_INTERMEDIATE_SIZE, HIDDEN_SIZE, 1, EXPERT_TILE_SIZE,
                    32, THREADS>;
-namespace test {
 struct __align__(16) ExpertTileTask {
   const float* expertWeights;
   const float* tokens;
@@ -42,7 +42,7 @@ struct __align__(16) ExpertTileTask {
 };
 
 using TaskManagerType = TaskManager<ExpertTileTask, 8192>;
-__constant__ TaskManagerType globalTaskManager;
+static __constant__ TaskManagerType globalTaskManager;
 
 template <typename T_EXPERT_TILE>
 __device__ void ExecuteTask(const ExpertTileTask& task, void* sharedMemPool) {
@@ -298,7 +298,6 @@ static void printResult(const float* result) {
     }
   }
 }
-}  // namespace test
 
 TEST(MoeRouting, basicTest) {
   constexpr int TOKENS_SIZE = TOKENS_NUM * HIDDEN_SIZE;
@@ -341,9 +340,9 @@ TEST(MoeRouting, basicTest) {
   HIP_ERROR_ASSERT(hipMemcpy(expertWeights_device, expertWeights_host.data(),
                              EXPERTS_WEIGHTS_SIZE * sizeof(float),
                              hipMemcpyHostToDevice));
-  HIP_ERROR_ASSERT(test::refHipRouting(tokens_device, gateWeights_device,
-                                       expertWeights_device, output_device,
-                                       TOKENS_NUM, EXPERTS_NUM, HIDDEN_SIZE));
+  HIP_ERROR_ASSERT(refHipRouting(tokens_device, gateWeights_device,
+                                 expertWeights_device, output_device,
+                                 TOKENS_NUM, EXPERTS_NUM, HIDDEN_SIZE));
 
   HIP_ERROR_ASSERT(hipDeviceSynchronize())
   HIP_ERROR_ASSERT(hipGetLastError());
@@ -358,13 +357,14 @@ TEST(MoeRouting, basicTest) {
   HIP_ERROR_ASSERT(hipFree(expertWeights_device));
   HIP_ERROR_ASSERT(hipFree(output_device));
 
-  auto refOut = test::refRouting(
-      tokens_host.data(), gateWeights_host.data(), expertWeights_host.data(),
-      TOKENS_NUM, EXPERTS_NUM, HIDDEN_SIZE, TOPK, EXPERT_INTERMEDIATE_SIZE);
+  auto refOut = refRouting(tokens_host.data(), gateWeights_host.data(),
+                           expertWeights_host.data(), TOKENS_NUM, EXPERTS_NUM,
+                           HIDDEN_SIZE, TOPK, EXPERT_INTERMEDIATE_SIZE);
 
-  test::sortResultData(output_host.data());
+  sortResultData(output_host.data());
 
   // test::printResult(output_host.data());
 
   CheckAgainstRefBuffer(output_host.data(), refOut.data(), refOut.size());
 }
+}  // namespace

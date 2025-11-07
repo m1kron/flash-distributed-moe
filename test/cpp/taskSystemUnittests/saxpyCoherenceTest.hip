@@ -6,6 +6,7 @@
 #include "../utils/utils.h"
 #include "gtest/gtest.h"
 
+namespace {
 #define THREAD_BLOCK_SIZE 128
 #define MIN_WARPS_PER_EXECUTION_UNIT 4
 
@@ -137,4 +138,5 @@ TEST(TaskSystemUnittests, SaxpyCoherenceTest) {
   for (size_t i = 0; i < dataSize; ++i) {
     ASSERT_EQ(dataCpu[i], 2 * i + 1) << " for i: " << i;
   }
+}
 }

@@ -6,6 +6,7 @@
 #include "../reference/refMoeGate.h"
 #include "../utils/utils.h"
 
+namespace {
 constexpr int M_SIZE = 48;
 constexpr int N_SIZE = 128;
 constexpr int K_SIZE = 2048;
@@ -114,4 +115,5 @@ TEST(MoeGate, basicTest) {
                         refOut.topkVals.size());
   CheckAgainstRefBuffer(host_topkIdx.data(), refOut.topkIdx.data(),
                         refOut.topkIdx.size());
+}
 }
