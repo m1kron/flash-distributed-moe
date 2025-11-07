@@ -7,6 +7,7 @@
 #include "staticGemmKernel.h"
 #include "taskSystemGemmKernel.h"
 
+namespace {
 template <typename TFunc>
 void PerformGemmCorrectnessTest(const TFunc func) {
   // Prepare input buffers for module
@@ -61,3 +62,4 @@ TEST(TaskSystemUnittests, TaskSystemGemm) {
 }
 
 TEST(TaskSystemUnittests, RefGemm) { PerformGemmCorrectnessTest(staticGemm); }
+}
