@@ -20,7 +20,7 @@ template <typename T>
 static void CheckAgainstRefBuffer(const T* buffer, const T* ref, int size,
                                   float abs_error = 1e-5f) {
   for (int i = 0; i < size; ++i) {
-    ASSERT_NEAR(buffer[i], ref[i], abs_error);
+    ASSERT_NEAR(buffer[i], ref[i], abs_error) << "for i = " << i;
   }
 }
 
