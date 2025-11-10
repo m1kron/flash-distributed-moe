@@ -17,22 +17,22 @@ constexpr int BLOCKS = 304;
 
 constexpr int EXPERT_TILE_SIZE = 256;
 using TExpertGemmTileParams =
-    GemmTileParams<2 * EXPERT_INTERMEDIATE_SIZE, HIDDEN_SIZE, 1,
-                   EXPERT_TILE_SIZE, 32, THREADS>;
+    GemmTileParams<EXPERT_INTERMEDIATE_SIZE, HIDDEN_SIZE, 1, EXPERT_TILE_SIZE,
+                   32, THREADS>;
 
-template <typename TGEMM_TILE>
 __global__ void hipExpertFFN1Kernel(const float* __restrict__ tokens,
                                     const float* __restrict__ expertWeights,
                                     float* __restrict__ output) {
-  __shared__ char sharedMemPool[TGEMM_TILE::SHARED_MEM_NEEDES_BYTES];
+  __shared__ char sharedMemPool[TExpertGemmTileParams::SHARED_MEM_NEEDES_BYTES];
 
-  constexpr int N_CHUNKS = (TGEMM_TILE::N / 2) / TGEMM_TILE::TILE_N;
+  constexpr int N_CHUNKS =
+      TExpertGemmTileParams::N / TExpertGemmTileParams::TILE_N;
 
   const int tokenIdx = blockIdx.x / N_CHUNKS;
   const int tileCol = blockIdx.x % N_CHUNKS;
 
-  tasks::expertFFN1Task<TGEMM_TILE>(tokens, expertWeights, output, tokenIdx,
-                                    tileCol, sharedMemPool);
+  tasks::expertFFN1Task<TExpertGemmTileParams>(
+      tokens, expertWeights, output, tokenIdx, tileCol, sharedMemPool);
 }
 
 static hipError_t hipExpertFFN1(const float* tokens, const float* expertWeights,
@@ -41,14 +41,10 @@ static hipError_t hipExpertFFN1(const float* tokens, const float* expertWeights,
   assert(hiddenSize == HIDDEN_SIZE);
   assert(tokensNum == TOKENS_NUM);
   assert(expertIntermediateSize == EXPERT_INTERMEDIATE_SIZE);
-
-  int bla = TExpertGemmTileParams::TILE_N;
-
   dim3 grid(tokensNum *
             (expertIntermediateSize / TExpertGemmTileParams::TILE_N));
   dim3 block(TExpertGemmTileParams::THREADS);
-  hipExpertFFN1Kernel<TExpertGemmTileParams>
-      <<<grid, block, 0, 0>>>(tokens, expertWeights, output);
+  hipExpertFFN1Kernel<<<grid, block, 0, 0>>>(tokens, expertWeights, output);
 
   return hipSuccess;
 }
