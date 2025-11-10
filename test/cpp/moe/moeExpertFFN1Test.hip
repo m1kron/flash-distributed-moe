@@ -1,7 +1,7 @@
 #include <hip/hip_runtime.h>
 
 #include "../../../src/hip/hipHostCommon.h"
-#include "../../../src/hip/tasks/internal/gemmTileBlock.h"
+#include "../../../src/hip/tasks/internal/expertFFN1.h"
 #include "../../../src/hip/utils/hipDeviceUtils.h"
 #include "../reference/refExpertFFN1.h"
 #include "../utils/utils.h"
@@ -20,19 +20,6 @@ using TExpertGemmTileParams =
     GemmTileParams<2 * EXPERT_INTERMEDIATE_SIZE, HIDDEN_SIZE, 1,
                    EXPERT_TILE_SIZE, 32, THREADS>;
 
-inline __device__ float Silu(float a, float b) {
-  float sig;
-  if (a >= 0.0f) {
-    sig = 1.0f / (1.0f + expf(-a));
-  } else {
-    float ea = expf(a);
-    sig = ea / (1.0f + ea);
-  }
-
-  const float silu = a * sig;
-  return silu * b;
-}
-
 template <typename TGEMM_TILE>
 __global__ void hipExpertFFN1Kernel(const float* __restrict__ tokens,
                                     const float* __restrict__ expertWeights,
@@ -44,26 +31,8 @@ __global__ void hipExpertFFN1Kernel(const float* __restrict__ tokens,
   const int tokenIdx = blockIdx.x / N_CHUNKS;
   const int tileCol = blockIdx.x % N_CHUNKS;
 
-  typename TGEMM_TILE::TOutputType w1_regs[TGEMM_TILE::THREAD_OUTPUT_SIZE];
-  GemmTile_block<TGEMM_TILE>(tokens, expertWeights, w1_regs, tokenIdx, tileCol,
-                             sharedMemPool);
-
-  typename TGEMM_TILE::TOutputType w3_regs[TGEMM_TILE::THREAD_OUTPUT_SIZE];
-  GemmTile_block<TGEMM_TILE>(tokens, expertWeights, w3_regs, tokenIdx,
-                             tileCol + N_CHUNKS, sharedMemPool);
-
-  // Silu:
-  for (int i = 0; i < TGEMM_TILE::THREAD_OUTPUT_SIZE; ++i) {
-    w3_regs[i] = Silu(w1_regs[i], w3_regs[i]);
-  }
-
-  // w3_regs contains output
-  using T_OUTPUT_TILE = GemmTileParams<TGEMM_TILE::N / 2, TGEMM_TILE::K,
-                                       TGEMM_TILE::TILE_M, TGEMM_TILE::TILE_N,
-                                       TGEMM_TILE::TILE_K, TGEMM_TILE::THREADS>;
-
-  WriteGemmTileToGlobalMem_block<T_OUTPUT_TILE>(w3_regs, output, tokenIdx,
-                                                tileCol);
+  tasks::expertFFN1Task<TGEMM_TILE>(tokens, expertWeights, output, tokenIdx,
+                                    tileCol, sharedMemPool);
 }
 
 static hipError_t hipExpertFFN1(const float* tokens, const float* expertWeights,
