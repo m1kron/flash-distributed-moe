@@ -20,10 +20,11 @@ inline __device__ float silu(float a, float b) {
 // Assumption is that output's N dimension equal to 2 * (expertWeights N
 // dimension).
 template <typename T_OUTPUT_TILE>
-__device__ void expertFFN1Task(const float* __restrict__ tokens,
-                               const float* __restrict__ expertWeights,
-                               float* __restrict__ output, int rowIdx,
-                               int colIdx, void* sharedMemPool) {
+__device__ void expertFFN1Task(
+    const typename T_OUTPUT_TILE::TInputType* __restrict__ tokens,
+    const typename T_OUTPUT_TILE::TInputType* __restrict__ expertWeights,
+    typename T_OUTPUT_TILE::TOutputType* __restrict__ output, int rowIdx,
+    int colIdx, void* sharedMemPool) {
   constexpr int N_CHUNKS = T_OUTPUT_TILE::N / T_OUTPUT_TILE::TILE_N;
 
   const int tokenIdx = rowIdx;
