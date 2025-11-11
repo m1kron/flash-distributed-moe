@@ -31,8 +31,12 @@ __global__ void hipExpertFFN1Kernel(const float* __restrict__ tokens,
   const int tokenIdx = blockIdx.x / N_CHUNKS;
   const int tileCol = blockIdx.x % N_CHUNKS;
 
+  typename TExpertGemmTileParams::TOutputType
+      outRegs[TExpertGemmTileParams::THREAD_OUTPUT_SIZE];
   tasks::expertFFN1Task<TExpertGemmTileParams>(
-      tokens, expertWeights, output, tokenIdx, tileCol, sharedMemPool);
+      tokens, expertWeights, outRegs, tokenIdx, tileCol, sharedMemPool);
+  WriteGemmTileToGlobalMem_block<TExpertGemmTileParams>(outRegs, output,
+                                                        tokenIdx, tileCol);
 }
 
 static hipError_t hipExpertFFN1(const float* tokens, const float* expertWeights,

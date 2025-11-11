@@ -19,11 +19,13 @@ inline __device__ float silu(float a, float b) {
 // Task for expert's FFN1. rowIdx and colIdx refers to output tiles.
 // Assumption is that output's N dimension equal to 2 * (expertWeights N
 // dimension).
+// Output is returned in register array of size
+// T_OUTPUT_TILE::THREAD_OUTPUT_SIZE;
 template <typename T_OUTPUT_TILE>
 __device__ void expertFFN1Task(
     const typename T_OUTPUT_TILE::TInputType* __restrict__ tokens,
     const typename T_OUTPUT_TILE::TInputType* __restrict__ expertWeights,
-    typename T_OUTPUT_TILE::TOutputType* __restrict__ output, int rowIdx,
+    typename T_OUTPUT_TILE::TOutputType* __restrict__ outRegs, int rowIdx,
     int colIdx, void* sharedMemPool) {
   constexpr int N_CHUNKS = T_OUTPUT_TILE::N / T_OUTPUT_TILE::TILE_N;
 
@@ -35,24 +37,21 @@ __device__ void expertFFN1Task(
                      T_OUTPUT_TILE::TILE_M, T_OUTPUT_TILE::TILE_N,
                      T_OUTPUT_TILE::TILE_K, T_OUTPUT_TILE::THREADS>;
 
+  static_assert(T_FFN1_TILE::THREAD_OUTPUT_SIZE ==
+                T_OUTPUT_TILE::THREAD_OUTPUT_SIZE);
+
   // TODO: Fuse gemms.
   typename T_FFN1_TILE::TOutputType w1_regs[T_FFN1_TILE::THREAD_OUTPUT_SIZE];
   GemmTile_block<T_FFN1_TILE>(tokens, expertWeights, w1_regs, tokenIdx, tileCol,
                               sharedMemPool);
 
-  typename T_FFN1_TILE::TOutputType w3_regs[T_FFN1_TILE::THREAD_OUTPUT_SIZE];
-  GemmTile_block<T_FFN1_TILE>(tokens, expertWeights, w3_regs, tokenIdx,
+  GemmTile_block<T_FFN1_TILE>(tokens, expertWeights, outRegs, tokenIdx,
                               tileCol + N_CHUNKS, sharedMemPool);
 
   // Silu:
   for (int i = 0; i < T_FFN1_TILE::THREAD_OUTPUT_SIZE; ++i) {
-    w3_regs[i] = silu(w1_regs[i], w3_regs[i]);
+    outRegs[i] = silu(w1_regs[i], outRegs[i]);
   }
-
-  // w3_regs contains output
-
-  WriteGemmTileToGlobalMem_block<T_OUTPUT_TILE>(w3_regs, output, tokenIdx,
-                                                tileCol);
 }
 
 }  // namespace tasks
