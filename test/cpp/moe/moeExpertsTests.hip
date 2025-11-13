@@ -76,19 +76,19 @@ __device__ void ExecuteExpertFFN1Task(const ExpertTileTask& task,
                            task.tokenIdx * TOPK * (T_EXPERT_TILE::N + 2) +
                            task.topkSlotIdx * (T_EXPERT_TILE::N + 2);
 
-  if (task.blockTileColStartIdx == 0) {
-    if (threadIdx.x == 0) {
-      thisBlockOutput[0] = (float)task.expertIdx;
-      thisBlockOutput[1] = (float)task.expertWeight;
-    }
-  }
+  // if (task.blockTileColStartIdx == 0) {
+  //   if (threadIdx.x == 0) {
+  //     thisBlockOutput[0] = (float)task.expertIdx;
+  //     thisBlockOutput[1] = (float)task.expertWeight;
+  //   }
+  // }
 
-  thisBlockOutput += 2;
+  // thisBlockOutput += 2;
 
   WriteGemmTileToGlobalMem_block<T_EXPERT_TILE>(outRegs, thisBlockOutput, 0,
                                                 task.blockTileColStartIdx);
 
-  // TODO: Is mem barrier needed? 
+  // TODO: Is mem barrier needed?
   constexpr int N_CHUNKS = T_EXPERT_TILE::N / T_EXPERT_TILE::TILE_N;
   bool* lastBlock = reinterpret_cast<bool*>(sharedMemPool);
   if (threadIdx.x == 0) {
@@ -128,8 +128,9 @@ __device__ void ExecuteGeneralTask(const ExpertTileTask& task,
 template <typename T_GATE_TILE, typename T_EXPERT_TILE>
 __global__ void refHipGatefRoutingExpertsKernel(
     const float* __restrict__ tokens, const float* __restrict__ gateWeights,
-    const float* __restrict__ ffn1ExpertWeights, float* __restrict__ output,
-    int TOKENS_NUM) {
+    const float* __restrict__ ffn1ExpertWeights,
+    const float* __restrict__ ffn2ExpertWeights, float* __restrict__ ffn1Output,
+    float* __restrict__ ffn2Output, int TOKENS_NUM) {
   constexpr int SHARED_MEM_SIZE_BYTES =
       T_GATE_TILE::SHARED_MEM_NEEDES_BYTES >
               T_EXPERT_TILE::SHARED_MEM_NEEDES_BYTES
@@ -160,7 +161,7 @@ __global__ void refHipGatefRoutingExpertsKernel(
       ExpertTileTask rTask;
       rTask.ffn1ExpertWeights = ffn1ExpertWeights;
       rTask.tokens = tokens;
-      rTask.output = output;
+      rTask.output = ffn1Output;
       rTask.tokenIdx = tokenIdx;
       rTask.expertIdx = s_topkIdx[i];
       rTask.expertWeight = s_topkVals[i];
@@ -187,7 +188,9 @@ __global__ void refHipGatefRoutingExpertsKernel(
 static hipError_t refHipGatefRoutingExperts(const float* tokens,
                                             const float* gateWeights,
                                             const float* ffn1ExpertWeights,
-                                            float* output, int tokensNum,
+                                            const float* ffn2ExpertWeights,
+                                            float* ffn1Output,
+                                            float* ffn2Output, int tokensNum,
                                             int expertsNum, int hiddenSize) {
   assert(hiddenSize == HIDDEN_SIZE);
   assert(tokensNum == TOKENS_NUM);
@@ -219,7 +222,8 @@ static hipError_t refHipGatefRoutingExperts(const float* tokens,
                                          0, hipMemcpyHostToDevice, stream));
 
   refHipGatefRoutingExpertsKernel<TGateGemmTileParams, TExpertFFN1TileParams>
-      <<<grid, block, 0, 0>>>(tokens, gateWeights, ffn1ExpertWeights, output,
+      <<<grid, block, 0, 0>>>(tokens, gateWeights, ffn1ExpertWeights,
+                              ffn2ExpertWeights, ffn1Output, ffn2Output,
                               tokensNum);
 
   HIP_ERROR_CHECK(managerHost.Deinit(stream));
@@ -232,6 +236,7 @@ static hipError_t refHipGatefRoutingExperts(const float* tokens,
 static std::vector<float> refGatefRoutingExperts(const float* tokens,
                                                  const float* gateWeights,
                                                  const float* ffn1ExpertWeights,
+                                                 const float* ffn2ExpertWeights,
                                                  int tokensNum, int expertsNum,
                                                  int hiddenSize, int topk,
                                                  int expertIntermediateSize) {
@@ -247,7 +252,7 @@ static std::vector<float> refGatefRoutingExperts(const float* tokens,
   const std::vector<float>& topkVals = gateOut.topkVals;
   const std::vector<int>& topkIdx = gateOut.topkIdx;
   const int rows = tokensNum * topk;
-  const int cols = expertIntermediateSize + 2;
+  const int cols = hiddenSize + 2;
 
   std::vector<float> out;
   out.assign(size_t(rows) * size_t(cols), 0.0f);
@@ -272,16 +277,24 @@ static std::vector<float> refGatefRoutingExperts(const float* tokens,
       }
 
       // ffn1ExpertWeights layout assumed: [expert][hidden][expertIntermediate]
-      const float* expertW =
+      const float* expertFFN1W =
           ffn1ExpertWeights +
           size_t(expert) * size_t(hiddenSize) * size_t(expertIntermediateSize);
 
-      auto refOut = test::refExpertFFN1(tokenPtr, expertW, 1, hiddenSize,
-                                        expertIntermediateSize);
+      auto refFFN1Out = test::refExpertFFN1(tokenPtr, expertFFN1W, 1,
+                                            hiddenSize, expertIntermediateSize);
+
+      // ffn1ExpertWeights layout assumed: [expert][expertIntermediate][hidden]
+      const float* expertFFN2W =
+          ffn2ExpertWeights +
+          size_t(expert) * size_t(hiddenSize) * size_t(expertIntermediateSize);
+      auto refFFN2Out = test::refGemm(refFFN1Out.data(), expertFFN2W, 1,
+                                      hiddenSize, expertIntermediateSize);
+
       // Copy projection into output row
-      for (int d = 0; d < expertIntermediateSize; ++d) {
+      for (int d = 0; d < hiddenSize; ++d) {
         out[rowBase + 2 + d] =
-            refOut[size_t(d)];  // proj is 1 x N stored row-major
+            refFFN2Out[size_t(d)];  // proj is 1 x N stored row-major
       }
     }
   }
@@ -292,10 +305,10 @@ static std::vector<float> refGatefRoutingExperts(const float* tokens,
 // GPU generates unsorted data within given topk bucket, sort it against expert
 // weight. GPT5-mini generated code with my minor changes.
 static void sortResultData(float* data) {
-  // data layout: TOKENS_NUM x TOPK x (EXPERT_INTERMEDIATE_SIZE + 2)
+  // data layout: TOKENS_NUM x TOPK x (HIDDEN_SIZE + 2)
   const int tokens = TOKENS_NUM;
   const int rows_per_token = TOPK;
-  const int cols = EXPERT_INTERMEDIATE_SIZE + 2;
+  const int cols = HIDDEN_SIZE + 2;
 
   // temporary buffer for swapping rows
   std::vector<float> tmp(cols);
@@ -327,17 +340,15 @@ static void printResult(const float* result) {
     std::cout << "TokenIdx: " << tokenIdx << std::endl;
     for (int i = 0; i < TOPK; ++i) {
       const float expertId =
-          result[tokenIdx * TOPK * (EXPERT_INTERMEDIATE_SIZE + 2) +
-                 i * (EXPERT_INTERMEDIATE_SIZE + 2)];
-      const float weight =
-          result[tokenIdx * TOPK * (EXPERT_INTERMEDIATE_SIZE + 2) +
-                 i * (EXPERT_INTERMEDIATE_SIZE + 2) + 1];
+          result[tokenIdx * TOPK * (HIDDEN_SIZE + 2) + i * (HIDDEN_SIZE + 2)];
+      const float weight = result[tokenIdx * TOPK * (HIDDEN_SIZE + 2) +
+                                  i * (HIDDEN_SIZE + 2) + 1];
       std::cout << "Expert id: " << expertId << ", weight: " << weight;
 
       for (int i = 2; i < 10; ++i) {
         std::cout << "|"
-                  << result[tokenIdx * TOPK * (EXPERT_INTERMEDIATE_SIZE + 2) +
-                            i * (EXPERT_INTERMEDIATE_SIZE + 2) + i];
+                  << result[tokenIdx * TOPK * (HIDDEN_SIZE + 2) +
+                            i * (HIDDEN_SIZE + 2) + i];
       }
 
       std::cout << std::endl;
@@ -351,8 +362,10 @@ TEST(MoeExperts, basicTest) {
   constexpr int ROUTING_SIZE = TOKENS_NUM * TOPK;
   constexpr int EXPERTS_FNN1_WEIGHTS_SIZE =
       EXPERTS_NUM * HIDDEN_SIZE * EXPERT_INTERMEDIATE_SIZE * 2;
-  constexpr int FFN1_OUTPUT_SIZE =
-      TOKENS_NUM * TOPK * (EXPERT_INTERMEDIATE_SIZE + 2);
+  constexpr int FFN1_OUTPUT_SIZE = TOKENS_NUM * TOPK * EXPERT_INTERMEDIATE_SIZE;
+  constexpr int EXPERTS_FNN2_WEIGHTS_SIZE =
+      EXPERTS_NUM * HIDDEN_SIZE * EXPERT_INTERMEDIATE_SIZE;
+  constexpr int FFN2_OUTPUT_SIZE = TOKENS_NUM * TOPK * (HIDDEN_SIZE + 2);
 
   std::vector<float> tokens_host =
       RandomVector<float>(TOKENS_SIZE, -1.0f, 1.0f);
@@ -362,20 +375,29 @@ TEST(MoeExperts, basicTest) {
   std::vector<int> host_topkIdx(ROUTING_SIZE);
   std::vector<float> expertFFN1Weights_host =
       RandomVector<float>(EXPERTS_FNN1_WEIGHTS_SIZE, -0.1f, 0.1f);
+  std::vector<float> expertFFN2Weights_host =
+      RandomVector<float>(EXPERTS_FNN1_WEIGHTS_SIZE, -0.1f, 0.1f);
 
-  std::vector<float> output_host(FFN1_OUTPUT_SIZE, 0.0f);
+  std::vector<float> output_host(FFN2_OUTPUT_SIZE, 0.0f);
 
   float* tokens_device = nullptr;
   float* gateWeights_device = nullptr;
   float* expertFFN1Weights_device = nullptr;
+  float* expertFFN2Weights_device = nullptr;
   float* ffn1Output_device = nullptr;
+  float* ffn2Output_device = nullptr;
 
   HIP_ERROR_ASSERT(hipMalloc(&tokens_device, TOKENS_SIZE * sizeof(float)));
   HIP_ERROR_ASSERT(
       hipMalloc(&gateWeights_device, GATE_WEIGHTS_SIZE * sizeof(float)));
   HIP_ERROR_ASSERT(hipMalloc(&expertFFN1Weights_device,
                              EXPERTS_FNN1_WEIGHTS_SIZE * sizeof(float)));
-  HIP_ERROR_ASSERT(hipMalloc(&ffn1Output_device, FFN1_OUTPUT_SIZE * sizeof(float)));
+  HIP_ERROR_ASSERT(hipMalloc(&expertFFN2Weights_device,
+                             EXPERTS_FNN2_WEIGHTS_SIZE * sizeof(float)));
+  HIP_ERROR_ASSERT(
+      hipMalloc(&ffn1Output_device, FFN1_OUTPUT_SIZE * sizeof(float)));
+  HIP_ERROR_ASSERT(
+      hipMalloc(&ffn2Output_device, FFN2_OUTPUT_SIZE * sizeof(float)));
 
   HIP_ERROR_ASSERT(hipMemcpy(tokens_device, tokens_host.data(),
                              TOKENS_SIZE * sizeof(float),
@@ -386,31 +408,38 @@ TEST(MoeExperts, basicTest) {
   HIP_ERROR_ASSERT(hipMemcpy(
       expertFFN1Weights_device, expertFFN1Weights_host.data(),
       EXPERTS_FNN1_WEIGHTS_SIZE * sizeof(float), hipMemcpyHostToDevice));
+  HIP_ERROR_ASSERT(hipMemcpy(
+      expertFFN2Weights_device, expertFFN2Weights_host.data(),
+      EXPERTS_FNN2_WEIGHTS_SIZE * sizeof(float), hipMemcpyHostToDevice));
+
   HIP_ERROR_ASSERT(refHipGatefRoutingExperts(
       tokens_device, gateWeights_device, expertFFN1Weights_device,
-      ffn1Output_device, TOKENS_NUM, EXPERTS_NUM, HIDDEN_SIZE));
+      expertFFN2Weights_device, ffn1Output_device, ffn2Output_device,
+      TOKENS_NUM, EXPERTS_NUM, HIDDEN_SIZE));
 
   HIP_ERROR_ASSERT(hipDeviceSynchronize())
   HIP_ERROR_ASSERT(hipGetLastError());
 
-  HIP_ERROR_ASSERT(hipMemcpy(output_host.data(), ffn1Output_device,
-                             FFN1_OUTPUT_SIZE * sizeof(float),
+  HIP_ERROR_ASSERT(hipMemcpy(output_host.data(), ffn2Output_device,
+                             FFN2_OUTPUT_SIZE * sizeof(float),
                              hipMemcpyDeviceToHost));
 
   // Free device memory.
   HIP_ERROR_ASSERT(hipFree(tokens_device));
   HIP_ERROR_ASSERT(hipFree(gateWeights_device));
   HIP_ERROR_ASSERT(hipFree(expertFFN1Weights_device));
+  HIP_ERROR_ASSERT(hipFree(expertFFN2Weights_device));
   HIP_ERROR_ASSERT(hipFree(ffn1Output_device));
+  HIP_ERROR_ASSERT(hipFree(ffn2Output_device));
 
   auto refOut = refGatefRoutingExperts(
       tokens_host.data(), gateWeights_host.data(),
-      expertFFN1Weights_host.data(), TOKENS_NUM, EXPERTS_NUM, HIDDEN_SIZE, TOPK,
-      EXPERT_INTERMEDIATE_SIZE);
+      expertFFN1Weights_host.data(), expertFFN2Weights_host.data(), TOKENS_NUM,
+      EXPERTS_NUM, HIDDEN_SIZE, TOPK, EXPERT_INTERMEDIATE_SIZE);
 
   sortResultData(output_host.data());
 
-  // printResult(refOut.data());
+  printResult(refOut.data());
 
   CheckAgainstRefBuffer(output_host.data(), refOut.data(), refOut.size(),
                         1e-4f);
