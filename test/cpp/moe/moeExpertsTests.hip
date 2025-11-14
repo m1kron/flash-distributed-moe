@@ -33,10 +33,18 @@ using TExpertFFN1TileParams =
     GemmTileParams<EXPERT_INTERMEDIATE_SIZE, HIDDEN_SIZE, 1, EXPERT_TILE_SIZE,
                    32, THREADS>;
 
+// Expert => token[1,EXPERT_INTERMEDIATE_SIZE] *
+// expertW[EXPERT_INTERMEDIATE_SIZE,HIDDEN_SIZE] => [1,HIDDEN_SIZE]
+using TExpertFFN2TileParams =
+    GemmTileParams<HIDDEN_SIZE, EXPERT_INTERMEDIATE_SIZE, 1, EXPERT_TILE_SIZE,
+                   32, THREADS>;
+
 struct __align__(16) ExpertTileTask {
   const float* ffn1ExpertWeights;
+  const float* ffn2ExpertWeights;
   const float* tokens;
-  float* output;
+  float* ffn1Output;
+  float* ffn2Output;
   float expertWeight;
   int tokenIdx;
   int expertIdx;
@@ -49,47 +57,36 @@ using TaskManagerType = TaskManager<ExpertTileTask, 8192>;
 static __constant__ TaskManagerType globalTaskManager;
 static __constant__ int* globalFFN1SyncArray;
 
-template <typename T_EXPERT_TILE>
+template <typename T_FFN1_TILE>
 __device__ void ExecuteExpertFFN1Task(const ExpertTileTask& task,
                                       void* sharedMemPool) {
   if (threadIdx.x == 65) {
     HIP_DEVICE_LOG(
         "Worker %i: Executes tile no: %i, tokenIdx: %i, expert: %i, weight: "
-        "%f\n",
+        "%f, col: %i\n",
         blockIdx.x, task.blockTileColStartIdx, task.tokenIdx, task.expertIdx,
-        task.expertWeight);
+        task.expertWeight, task.blockTileColStartIdx);
   }
 
-  const float* thisBlockTokens = task.tokens + task.tokenIdx * T_EXPERT_TILE::K;
+  const float* thisBlockTokens = task.tokens + task.tokenIdx * T_FFN1_TILE::K;
   const float* thisffn1ExpertWeights =
-      task.ffn1ExpertWeights +
-      task.expertIdx * T_EXPERT_TILE::K * T_EXPERT_TILE::N;
+      task.ffn1ExpertWeights + task.expertIdx * T_FFN1_TILE::K * T_FFN1_TILE::N;
 
-  typename T_EXPERT_TILE::TOutputType
-      outRegs[T_EXPERT_TILE::THREAD_OUTPUT_SIZE];
+  typename T_FFN1_TILE::TOutputType outRegs[T_FFN1_TILE::THREAD_OUTPUT_SIZE];
 
-  tasks::expertFFN1Task<T_EXPERT_TILE>(thisBlockTokens, thisffn1ExpertWeights,
-                                       outRegs, 0, task.blockTileColStartIdx,
-                                       sharedMemPool);
+  tasks::expertFFN1Task<T_FFN1_TILE>(thisBlockTokens, thisffn1ExpertWeights,
+                                     outRegs, 0, task.blockTileColStartIdx,
+                                     sharedMemPool);
 
-  float* thisBlockOutput = task.output +
-                           task.tokenIdx * TOPK * (T_EXPERT_TILE::N + 2) +
-                           task.topkSlotIdx * (T_EXPERT_TILE::N + 2);
+  float* thisBlockOutput = task.ffn1Output +
+                           task.tokenIdx * TOPK * T_FFN1_TILE::N +
+                           task.topkSlotIdx * T_FFN1_TILE::N;
 
-  // if (task.blockTileColStartIdx == 0) {
-  //   if (threadIdx.x == 0) {
-  //     thisBlockOutput[0] = (float)task.expertIdx;
-  //     thisBlockOutput[1] = (float)task.expertWeight;
-  //   }
-  // }
-
-  // thisBlockOutput += 2;
-
-  WriteGemmTileToGlobalMem_block<T_EXPERT_TILE>(outRegs, thisBlockOutput, 0,
-                                                task.blockTileColStartIdx);
+  WriteGemmTileToGlobalMem_block<T_FFN1_TILE>(outRegs, thisBlockOutput, 0,
+                                              task.blockTileColStartIdx);
 
   // TODO: Is mem barrier needed?
-  constexpr int N_CHUNKS = T_EXPERT_TILE::N / T_EXPERT_TILE::TILE_N;
+  constexpr int N_CHUNKS = T_FFN1_TILE::N / T_FFN1_TILE::TILE_N;
   bool* lastBlock = reinterpret_cast<bool*>(sharedMemPool);
   if (threadIdx.x == 0) {
     int processed = atomicAdd(
@@ -102,22 +99,63 @@ __device__ void ExecuteExpertFFN1Task(const ExpertTileTask& task,
     // Add tasks for ffn2:
     ExpertTileTask ffn2Task = task;
     ffn2Task.taskType = 1;
-    globalTaskManager.PushTask_warp(&ffn2Task);
+
+    constexpr int FFN2_CHUNKS = T_FFN1_TILE::K / T_FFN1_TILE::TILE_N;
+    for (int colIdx = 0; colIdx < FFN2_CHUNKS; ++colIdx) {
+      ffn2Task.blockTileColStartIdx = colIdx;
+      globalTaskManager.PushTask_warp(&ffn2Task);
+    }
   }
 }
 
-template <typename T_EXPERT_TILE>
+template <typename T_FFN2_TILE>
+__device__ void ExecuteExpertFFN2Task(const ExpertTileTask& task,
+                                      void* sharedMemPool) {
+  if (threadIdx.x == 65) {
+    HIP_DEVICE_LOG(
+        "Worker %i: Executes tile no: %i, tokenIdx: %i, expert: %i, weight: "
+        "%f\n",
+        blockIdx.x, task.blockTileColStartIdx, task.tokenIdx, task.expertIdx,
+        task.expertWeight);
+  }
+
+  const float* thisBlockInput = task.ffn1Output +
+                                task.tokenIdx * TOPK * T_FFN2_TILE::K +
+                                task.topkSlotIdx * T_FFN2_TILE::K;
+  const float* thisffn2ExpertWeights =
+      task.ffn2ExpertWeights + task.expertIdx * T_FFN2_TILE::K * T_FFN2_TILE::N;
+
+  typename T_FFN2_TILE::TOutputType outRegs[T_FFN2_TILE::THREAD_OUTPUT_SIZE];
+
+  GemmTile_block<T_FFN2_TILE>(thisBlockInput, thisffn2ExpertWeights, outRegs, 0,
+                              task.blockTileColStartIdx, sharedMemPool);
+
+  float* thisBlockOutput = task.ffn2Output +
+                           task.tokenIdx * TOPK * (T_FFN2_TILE::N + 2) +
+                           task.topkSlotIdx * (T_FFN2_TILE::N + 2);
+
+  if (task.blockTileColStartIdx == 0) {
+    if (threadIdx.x == 0) {
+      thisBlockOutput[0] = (float)task.expertIdx;
+      thisBlockOutput[1] = (float)task.expertWeight;
+    }
+  }
+
+  thisBlockOutput += 2;
+
+  WriteGemmTileToGlobalMem_block<T_FFN2_TILE>(outRegs, thisBlockOutput, 0,
+                                              task.blockTileColStartIdx);
+}
+
+template <typename T_FFN1_TILE, typename T_FFN2_TILE>
 __device__ void ExecuteGeneralTask(const ExpertTileTask& task,
                                    void* sharedMemPool) {
   switch (task.taskType) {
     case 0: {
-      ExecuteExpertFFN1Task<T_EXPERT_TILE>(task, sharedMemPool);
+      ExecuteExpertFFN1Task<T_FFN1_TILE>(task, sharedMemPool);
     }
     case 1: {
-      if (threadIdx.x == 65) {
-        printf("Worker: %i: Executing ffn2 task for tokenIDx: %i!\n",
-               blockIdx.x, task.tokenIdx);
-      }
+      ExecuteExpertFFN2Task<T_FFN2_TILE>(task, sharedMemPool);
     }
     default: {
       HIP_DEVICE_ASSERT(false);
@@ -125,17 +163,22 @@ __device__ void ExecuteGeneralTask(const ExpertTileTask& task,
   }
 }
 
-template <typename T_GATE_TILE, typename T_EXPERT_TILE>
+template <typename T>
+constexpr __device__ T max(T a, T b) {
+  return a > b ? a : b;
+}
+
+template <typename T_GATE_TILE, typename T_FFN1_TILE, typename T_FFN2_TILE>
 __global__ void refHipGatefRoutingExpertsKernel(
     const float* __restrict__ tokens, const float* __restrict__ gateWeights,
     const float* __restrict__ ffn1ExpertWeights,
     const float* __restrict__ ffn2ExpertWeights, float* __restrict__ ffn1Output,
     float* __restrict__ ffn2Output, int TOKENS_NUM) {
   constexpr int SHARED_MEM_SIZE_BYTES =
-      T_GATE_TILE::SHARED_MEM_NEEDES_BYTES >
-              T_EXPERT_TILE::SHARED_MEM_NEEDES_BYTES
-          ? T_GATE_TILE::SHARED_MEM_NEEDES_BYTES
-          : T_EXPERT_TILE::SHARED_MEM_NEEDES_BYTES;
+      max(T_GATE_TILE::SHARED_MEM_NEEDES_BYTES,
+          max(T_FFN1_TILE::SHARED_MEM_NEEDES_BYTES,
+              T_FFN2_TILE::SHARED_MEM_NEEDES_BYTES));
+
   __shared__ char sharedMemPool[SHARED_MEM_SIZE_BYTES];
 
   for (int tokenIdx = blockIdx.x; tokenIdx < TOKENS_NUM;
@@ -160,8 +203,10 @@ __global__ void refHipGatefRoutingExpertsKernel(
     for (int i = 0; i < TOPK; ++i) {
       ExpertTileTask rTask;
       rTask.ffn1ExpertWeights = ffn1ExpertWeights;
+      rTask.ffn2ExpertWeights = ffn2ExpertWeights;
       rTask.tokens = tokens;
-      rTask.output = ffn1Output;
+      rTask.ffn1Output = ffn1Output;
+      rTask.ffn2Output = ffn2Output;
       rTask.tokenIdx = tokenIdx;
       rTask.expertIdx = s_topkIdx[i];
       rTask.expertWeight = s_topkVals[i];
@@ -182,7 +227,8 @@ __global__ void refHipGatefRoutingExpertsKernel(
   }
 
   workerTaskSystemLoop_block(globalTaskManager,
-                             ExecuteGeneralTask<T_EXPERT_TILE>, sharedMemPool);
+                             ExecuteGeneralTask<T_FFN1_TILE, T_FFN2_TILE>,
+                             sharedMemPool);
 }
 
 static hipError_t refHipGatefRoutingExperts(const float* tokens,
@@ -203,7 +249,7 @@ static hipError_t refHipGatefRoutingExperts(const float* tokens,
   TaskManagerType managerHost;
   const int ffn1TasksNum =
       TOKENS_NUM * TOPK * (EXPERT_INTERMEDIATE_SIZE / EXPERT_TILE_SIZE);
-  const int ffn2TasksNum = TOKENS_NUM * TOPK;
+  const int ffn2TasksNum = TOKENS_NUM * TOPK * (HIDDEN_SIZE / EXPERT_TILE_SIZE);
   const int expectedNumTasks = ffn1TasksNum + ffn2TasksNum;
   HIP_ERROR_CHECK(managerHost.Init(stream, expectedNumTasks));
 
@@ -221,10 +267,10 @@ static hipError_t refHipGatefRoutingExperts(const float* tokens,
                                          &managerHost, sizeof(TaskManagerType),
                                          0, hipMemcpyHostToDevice, stream));
 
-  refHipGatefRoutingExpertsKernel<TGateGemmTileParams, TExpertFFN1TileParams>
-      <<<grid, block, 0, 0>>>(tokens, gateWeights, ffn1ExpertWeights,
-                              ffn2ExpertWeights, ffn1Output, ffn2Output,
-                              tokensNum);
+  refHipGatefRoutingExpertsKernel<TGateGemmTileParams, TExpertFFN1TileParams,
+                                  TExpertFFN2TileParams><<<grid, block, 0, 0>>>(
+      tokens, gateWeights, ffn1ExpertWeights, ffn2ExpertWeights, ffn1Output,
+      ffn2Output, tokensNum);
 
   HIP_ERROR_CHECK(managerHost.Deinit(stream));
   HIP_ERROR_CHECK(hipFreeAsync(ffn1SyncArray, stream));
@@ -345,10 +391,10 @@ static void printResult(const float* result) {
                                   i * (HIDDEN_SIZE + 2) + 1];
       std::cout << "Expert id: " << expertId << ", weight: " << weight;
 
-      for (int i = 2; i < 10; ++i) {
+      for (int j = 2; j < 10; ++j) {
         std::cout << "|"
                   << result[tokenIdx * TOPK * (HIDDEN_SIZE + 2) +
-                            i * (HIDDEN_SIZE + 2) + i];
+                            i * (HIDDEN_SIZE + 2) + j];
       }
 
       std::cout << std::endl;
@@ -376,7 +422,7 @@ TEST(MoeExperts, basicTest) {
   std::vector<float> expertFFN1Weights_host =
       RandomVector<float>(EXPERTS_FNN1_WEIGHTS_SIZE, -0.1f, 0.1f);
   std::vector<float> expertFFN2Weights_host =
-      RandomVector<float>(EXPERTS_FNN1_WEIGHTS_SIZE, -0.1f, 0.1f);
+      RandomVector<float>(EXPERTS_FNN2_WEIGHTS_SIZE, -0.1f, 0.1f);
 
   std::vector<float> output_host(FFN2_OUTPUT_SIZE, 0.0f);
 
@@ -439,8 +485,9 @@ TEST(MoeExperts, basicTest) {
 
   sortResultData(output_host.data());
 
-  printResult(refOut.data());
+  // printResult(output_host.data());
 
+  ASSERT_EQ(output_host.size(), refOut.size());
   CheckAgainstRefBuffer(output_host.data(), refOut.data(), refOut.size(),
                         1e-4f);
 }
