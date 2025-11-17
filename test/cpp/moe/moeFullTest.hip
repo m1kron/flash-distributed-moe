@@ -19,6 +19,7 @@ constexpr int EXPERT_INTERMEDIATE_SIZE = 768;
 constexpr int TOPK = 8;
 constexpr int THREADS = 128;
 constexpr int BLOCKS = 304;
+constexpr int REDUCTION_BLOCK_SIZE = 512;
 
 // Gate => tokens[TOKENS_NUM,HIDDEN_SIZE] * gate[HIDDEN_SIZE,EXPERTS_NUM] =>
 // routing[TOKENS_NUM,EXPERTS_NUM]
@@ -55,6 +56,7 @@ struct __align__(16) ExpertTileTask {
 using TaskManagerType = TaskManager<ExpertTileTask, 8192>;
 static __constant__ TaskManagerType globalTaskManager;
 static __constant__ int* globalFFN1SyncArray;
+static __constant__ int* globalFFN2SyncArray;
 
 template <typename T_FFN1_TILE>
 __device__ void ExecuteExpertFFN1Task(const ExpertTileTask& task,
@@ -144,6 +146,28 @@ __device__ void ExecuteExpertFFN2Task(const ExpertTileTask& task,
 
   WriteGemmTileToGlobalMem_block<T_FFN2_TILE>(outRegs, thisBlockOutput, 0,
                                               task.blockTileColStartIdx);
+
+  // TODO: Is mem barrier needed?
+  constexpr int N_CHUNKS = T_FFN2_TILE::N / T_FFN2_TILE::TILE_N;
+  bool* lastBlock = reinterpret_cast<bool*>(sharedMemPool);
+  if (threadIdx.x == 0) {
+    int processed = atomicAdd(
+        &globalFFN2SyncArray[task.tokenIdx * TOPK + task.topkSlotIdx], 1);
+    *lastBlock = ((processed + 1) == N_CHUNKS);
+  }
+
+  __syncthreads();
+  if (*lastBlock) {
+    // Add tasks for ffn2:
+    ExpertTileTask ffn2Task = task;
+    ffn2Task.taskType = 2;
+
+    constexpr int REDUCTION_CHUNKS = T_FFN2_TILE::N / REDUCTION_BLOCK_SIZE;
+    for (int colIdx = 0; colIdx < 1; ++colIdx) {
+      ffn2Task.blockTileColStartIdx = colIdx;
+      globalTaskManager.PushTask_warp(&ffn2Task);
+    }
+  }
 }
 
 template <typename T_FFN1_TILE, typename T_FFN2_TILE>
@@ -152,11 +176,26 @@ __device__ void ExecuteGeneralTask(const ExpertTileTask& task,
   switch (task.taskType) {
     case 0: {
       ExecuteExpertFFN1Task<T_FFN1_TILE>(task, sharedMemPool);
+      break;
     }
     case 1: {
       ExecuteExpertFFN2Task<T_FFN2_TILE>(task, sharedMemPool);
+      break;
+    }
+    case 2: {
+      if (threadIdx.x == 0) {
+        printf(
+            "Worker: %i: executing reduction task for tokenIdx: %i, chunk: "
+            "%i\n",
+            blockIdx.x, task.tokenIdx, task.blockTileColStartIdx);
+      }
+      break;
     }
     default: {
+      if (threadIdx.x == 0) {
+        printf("Worker: %i: executing no existing task of type: %i\n",
+               blockIdx.x, task.taskType);
+      }
       HIP_DEVICE_ASSERT(false);
     }
   }
@@ -246,10 +285,15 @@ static hipError_t refHipGatefRoutingExperts(const float* tokens,
 
   hipStream_t stream = 0;
   TaskManagerType managerHost;
-  const int ffn1TasksNum =
+  constexpr int ffn1TasksNum =
       TOKENS_NUM * TOPK * (EXPERT_INTERMEDIATE_SIZE / EXPERT_TILE_SIZE);
-  const int ffn2TasksNum = TOKENS_NUM * TOPK * (HIDDEN_SIZE / EXPERT_TILE_SIZE);
-  const int expectedNumTasks = ffn1TasksNum + ffn2TasksNum;
+  constexpr int ffn2TasksNum =
+      TOKENS_NUM * TOPK * (HIDDEN_SIZE / EXPERT_TILE_SIZE);
+  constexpr int reductionTasksNum =
+      TOKENS_NUM;  //* (HIDDEN_SIZE / REDUCTION_BLOCK_SIZE);
+  constexpr int expectedNumTasks =
+      ffn1TasksNum + ffn2TasksNum + reductionTasksNum;
+  printf("expectedNumTasks: %i\n", expectedNumTasks);
   HIP_ERROR_CHECK(managerHost.Init(stream, expectedNumTasks));
 
   int* ffn1SyncArray;
@@ -257,9 +301,17 @@ static hipError_t refHipGatefRoutingExperts(const float* tokens,
       hipMallocAsync(&ffn1SyncArray, sizeof(int) * TOKENS_NUM * TOPK, stream));
   HIP_ERROR_CHECK(hipMemsetAsync(ffn1SyncArray, 0,
                                  sizeof(int) * TOKENS_NUM * TOPK, stream));
-
   HIP_ERROR_CHECK(hipMemcpyToSymbolAsync(HIP_SYMBOL(globalFFN1SyncArray),
                                          &ffn1SyncArray, sizeof(int*), 0,
+                                         hipMemcpyHostToDevice, stream));
+
+  int* ffn2SyncArray;
+  HIP_ERROR_CHECK(
+      hipMallocAsync(&ffn2SyncArray, sizeof(int) * TOKENS_NUM * TOPK, stream));
+  HIP_ERROR_CHECK(hipMemsetAsync(ffn2SyncArray, 0,
+                                 sizeof(int) * TOKENS_NUM * TOPK, stream));
+  HIP_ERROR_CHECK(hipMemcpyToSymbolAsync(HIP_SYMBOL(globalFFN2SyncArray),
+                                         &ffn2SyncArray, sizeof(int*), 0,
                                          hipMemcpyHostToDevice, stream));
 
   HIP_ERROR_CHECK(hipMemcpyToSymbolAsync(HIP_SYMBOL(globalTaskManager),
@@ -273,6 +325,7 @@ static hipError_t refHipGatefRoutingExperts(const float* tokens,
 
   HIP_ERROR_CHECK(managerHost.Deinit(stream));
   HIP_ERROR_CHECK(hipFreeAsync(ffn1SyncArray, stream));
+  HIP_ERROR_CHECK(hipFreeAsync(ffn2SyncArray, stream));
 
   return hipSuccess;
 }
@@ -313,64 +366,64 @@ TEST(MoeFull, basicTest) {
 
   std::vector<float> output_host(FFN2_OUTPUT_SIZE, 0.0f);
 
-  // float* tokens_device = nullptr;
-  // float* gateWeights_device = nullptr;
-  // float* expertFFN1Weights_device = nullptr;
-  // float* expertFFN2Weights_device = nullptr;
-  // float* ffn1Output_device = nullptr;
-  // float* ffn2Output_device = nullptr;
+  float* tokens_device = nullptr;
+  float* gateWeights_device = nullptr;
+  float* expertFFN1Weights_device = nullptr;
+  float* expertFFN2Weights_device = nullptr;
+  float* ffn1Output_device = nullptr;
+  float* ffn2Output_device = nullptr;
 
-  // HIP_ERROR_ASSERT(hipMalloc(&tokens_device, TOKENS_SIZE * sizeof(float)));
-  // HIP_ERROR_ASSERT(
-  //     hipMalloc(&gateWeights_device, GATE_WEIGHTS_SIZE * sizeof(float)));
-  // HIP_ERROR_ASSERT(hipMalloc(&expertFFN1Weights_device,
-  //                            EXPERTS_FNN1_WEIGHTS_SIZE * sizeof(float)));
-  // HIP_ERROR_ASSERT(hipMalloc(&expertFFN2Weights_device,
-  //                            EXPERTS_FNN2_WEIGHTS_SIZE * sizeof(float)));
-  // HIP_ERROR_ASSERT(
-  //     hipMalloc(&ffn1Output_device, FFN1_OUTPUT_SIZE * sizeof(float)));
-  // HIP_ERROR_ASSERT(
-  //     hipMalloc(&ffn2Output_device, FFN2_OUTPUT_SIZE * sizeof(float)));
+  HIP_ERROR_ASSERT(hipMalloc(&tokens_device, TOKENS_SIZE * sizeof(float)));
+  HIP_ERROR_ASSERT(
+      hipMalloc(&gateWeights_device, GATE_WEIGHTS_SIZE * sizeof(float)));
+  HIP_ERROR_ASSERT(hipMalloc(&expertFFN1Weights_device,
+                             EXPERTS_FNN1_WEIGHTS_SIZE * sizeof(float)));
+  HIP_ERROR_ASSERT(hipMalloc(&expertFFN2Weights_device,
+                             EXPERTS_FNN2_WEIGHTS_SIZE * sizeof(float)));
+  HIP_ERROR_ASSERT(
+      hipMalloc(&ffn1Output_device, FFN1_OUTPUT_SIZE * sizeof(float)));
+  HIP_ERROR_ASSERT(
+      hipMalloc(&ffn2Output_device, FFN2_OUTPUT_SIZE * sizeof(float)));
 
-  // HIP_ERROR_ASSERT(hipMemcpy(tokens_device, tokens_host.data(),
-  //                            TOKENS_SIZE * sizeof(float),
-  //                            hipMemcpyHostToDevice));
-  // HIP_ERROR_ASSERT(hipMemcpy(gateWeights_device, gateWeights_host.data(),
-  //                            GATE_WEIGHTS_SIZE * sizeof(float),
-  //                            hipMemcpyHostToDevice));
-  // HIP_ERROR_ASSERT(hipMemcpy(
-  //     expertFFN1Weights_device, expertFFN1Weights_host.data(),
-  //     EXPERTS_FNN1_WEIGHTS_SIZE * sizeof(float), hipMemcpyHostToDevice));
-  // HIP_ERROR_ASSERT(hipMemcpy(
-  //     expertFFN2Weights_device, expertFFN2Weights_host.data(),
-  //     EXPERTS_FNN2_WEIGHTS_SIZE * sizeof(float), hipMemcpyHostToDevice));
+  HIP_ERROR_ASSERT(hipMemcpy(tokens_device, tokens_host.data(),
+                             TOKENS_SIZE * sizeof(float),
+                             hipMemcpyHostToDevice));
+  HIP_ERROR_ASSERT(hipMemcpy(gateWeights_device, gateWeights_host.data(),
+                             GATE_WEIGHTS_SIZE * sizeof(float),
+                             hipMemcpyHostToDevice));
+  HIP_ERROR_ASSERT(hipMemcpy(
+      expertFFN1Weights_device, expertFFN1Weights_host.data(),
+      EXPERTS_FNN1_WEIGHTS_SIZE * sizeof(float), hipMemcpyHostToDevice));
+  HIP_ERROR_ASSERT(hipMemcpy(
+      expertFFN2Weights_device, expertFFN2Weights_host.data(),
+      EXPERTS_FNN2_WEIGHTS_SIZE * sizeof(float), hipMemcpyHostToDevice));
 
-  // HIP_ERROR_ASSERT(refHipGatefRoutingExperts(
-  //     tokens_device, gateWeights_device, expertFFN1Weights_device,
-  //     expertFFN2Weights_device, ffn1Output_device, ffn2Output_device,
-  //     TOKENS_NUM, EXPERTS_NUM, HIDDEN_SIZE));
+  HIP_ERROR_ASSERT(refHipGatefRoutingExperts(
+      tokens_device, gateWeights_device, expertFFN1Weights_device,
+      expertFFN2Weights_device, ffn1Output_device, ffn2Output_device,
+      TOKENS_NUM, EXPERTS_NUM, HIDDEN_SIZE));
 
-  // HIP_ERROR_ASSERT(hipDeviceSynchronize())
-  // HIP_ERROR_ASSERT(hipGetLastError());
+  HIP_ERROR_ASSERT(hipDeviceSynchronize())
+  HIP_ERROR_ASSERT(hipGetLastError());
 
-  // HIP_ERROR_ASSERT(hipMemcpy(output_host.data(), ffn2Output_device,
-  //                            FFN2_OUTPUT_SIZE * sizeof(float),
-  //                            hipMemcpyDeviceToHost));
+  HIP_ERROR_ASSERT(hipMemcpy(output_host.data(), ffn2Output_device,
+                             FFN2_OUTPUT_SIZE * sizeof(float),
+                             hipMemcpyDeviceToHost));
 
-  // // Free device memory.
-  // HIP_ERROR_ASSERT(hipFree(tokens_device));
-  // HIP_ERROR_ASSERT(hipFree(gateWeights_device));
-  // HIP_ERROR_ASSERT(hipFree(expertFFN1Weights_device));
-  // HIP_ERROR_ASSERT(hipFree(expertFFN2Weights_device));
-  // HIP_ERROR_ASSERT(hipFree(ffn1Output_device));
-  // HIP_ERROR_ASSERT(hipFree(ffn2Output_device));
+  // Free device memory.
+  HIP_ERROR_ASSERT(hipFree(tokens_device));
+  HIP_ERROR_ASSERT(hipFree(gateWeights_device));
+  HIP_ERROR_ASSERT(hipFree(expertFFN1Weights_device));
+  HIP_ERROR_ASSERT(hipFree(expertFFN2Weights_device));
+  HIP_ERROR_ASSERT(hipFree(ffn1Output_device));
+  HIP_ERROR_ASSERT(hipFree(ffn2Output_device));
 
   auto refOut = test::refFullMoe(
       tokens_host.data(), gateWeights_host.data(),
       expertFFN1Weights_host.data(), expertFFN2Weights_host.data(), TOKENS_NUM,
       EXPERTS_NUM, HIDDEN_SIZE, TOPK, EXPERT_INTERMEDIATE_SIZE);
 
-  printResult(refOut.data());
+  // printResult(refOut.data());
 
   // ASSERT_EQ(output_host.size(), refOut.size());
   // CheckAgainstRefBuffer(output_host.data(), refOut.data(), refOut.size(),
