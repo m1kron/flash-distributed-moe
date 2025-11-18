@@ -89,6 +89,7 @@ __device__ void ExecuteExpertFFN1Task(const ExpertTileTask& task,
   WriteGemmTileToGlobalMem_block<T_FFN1_TILE>(outRegs, thisBlockOutput, 0,
                                               task.blockTileColStartIdx);
 
+  __threadfence();
   // TODO: Is mem barrier needed?
   constexpr int N_CHUNKS = T_FFN1_TILE::N / T_FFN1_TILE::TILE_N;
   bool* lastBlock = reinterpret_cast<bool*>(sharedMemPool);
@@ -146,6 +147,7 @@ __device__ void ExecuteExpertFFN2Task(const ExpertTileTask& task,
   WriteGemmTileToGlobalMem_block<T_FFN2_TILE>(outRegs, thisBlockOutput, 0,
                                               task.blockTileColStartIdx);
 
+  __threadfence();
   // TODO: Is mem barrier needed?
   constexpr int FFN2_DEP_SIZE = REDUCTION_TILE_SIZE / T_FFN2_TILE::TILE_N;
   constexpr int CHUNKS_NEED = FFN2_DEP_SIZE * TOPK;
@@ -176,10 +178,8 @@ __device__ void ExecuteFinalReductionTask(const ExpertTileTask& task,
 
   float* thisBlockOutput = task.finalOutput + task.tokenIdx * HIDDEN_SIZE;
 
-  if (task.tokenIdx == 0) {
-    tasks::Reduce_block<TOPK, REDUCTION_TILE_SIZE, THREADS, HIDDEN_SIZE>(
-        thisBlockInput, thisBlockOutput, task.blockTileColStartIdx);
-  }
+  tasks::Reduce_block<TOPK, REDUCTION_TILE_SIZE, THREADS, HIDDEN_SIZE>(
+      thisBlockInput, thisBlockOutput, task.blockTileColStartIdx);
 }
 
 template <typename T_FFN1_TILE, typename T_FFN2_TILE>
@@ -438,6 +438,6 @@ TEST(MoeFull, basicTest) {
 
   ASSERT_EQ(output_host.size(), refOut.size());
   CheckAgainstRefBuffer(output_host.data(), refOut.data(), refOut.size(),
-                        1e-4f);
+                        1e-5f);
 }
 }  // namespace
