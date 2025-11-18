@@ -27,13 +27,12 @@ static std::vector<T> refFullMoe(const T* tokens, const T* gateWeights,
   std::vector<T> out;
   out.assign(size_t(rows) * size_t(cols), 0.0f);
 
-  for (int t = 0; t < tokensNum; ++t) {
-    const T* tokenPtr = tokens + size_t(t) * size_t(hiddenSize);
+  for (int tokenIdx = 0; tokenIdx < tokensNum; ++tokenIdx) {
+    const T* tokenPtr = tokens + size_t(tokenIdx) * size_t(hiddenSize);
+    T* outTokenPtr = out.data() + size_t(tokenIdx) * size_t(hiddenSize);
     for (int k = 0; k < topk; ++k) {
-      const int row = t;
-      const int expert = topkIdx[row];
-      const T gateScore = topkVals[row];
-      const size_t rowBase = size_t(row) * size_t(cols);
+      const int expert = topkIdx[tokenIdx * topk + k];
+      const T gateScore = topkVals[tokenIdx * topk + k];
 
       // projection columns start at offset 2
       if (expert < 0 || expert >= expertsNum || ffn1ExpertWeights == nullptr) {
@@ -58,8 +57,8 @@ static std::vector<T> refFullMoe(const T* tokens, const T* gateWeights,
 
       // Copy projection into output row
       for (int d = 0; d < hiddenSize; ++d) {
-        out[rowBase + d] += refFFN2Out[size_t(d)] *
-                            gateScore;  // proj is 1 x N stored row-major
+        outTokenPtr[d] += refFFN2Out[size_t(d)] *
+                          gateScore;  // proj is 1 x N stored row-major
       }
     }
   }
