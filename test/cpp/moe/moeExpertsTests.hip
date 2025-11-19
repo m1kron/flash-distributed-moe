@@ -153,9 +153,11 @@ __device__ void ExecuteGeneralTask(const ExpertTileTask& task,
   switch (task.taskType) {
     case 0: {
       ExecuteExpertFFN1Task<T_FFN1_TILE>(task, sharedMemPool);
+      break;
     }
     case 1: {
       ExecuteExpertFFN2Task<T_FFN2_TILE>(task, sharedMemPool);
+      break;
     }
     default: {
       HIP_DEVICE_ASSERT(false);
