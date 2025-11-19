@@ -49,35 +49,61 @@ __global__ void taskSystemGemmKernel(const float* __restrict__ A,
                              sharedMemPool);
 }
 
-hipError_t taskSystemGemm(const float* A, const float* B, float* C, int M,
-                          int N, int K) {
-  constexpr int m_size = 2048;
-  constexpr int n_size = 1536;
+struct TaskSystemGemmParams {
+  TaskManagerType managerHost;
+  int blocksPerKernel;
+  dim3 blockDim;
+  dim3 gridDim;
+  hipStream_t stream = 0;
+};
+
+hipError_t initTaskSystemGemm(void** state) {
+  constexpr int M_SIZE = 2048;
+  constexpr int N_SIZE = 1536;
+  assert(M == 2048);
+  assert(N == 1536);
+  TaskSystemGemmParams* params = new TaskSystemGemmParams();
+  HIP_ERROR_CHECK(params->managerHost.Init(params->stream));
+
+  HIP_ERROR_CHECK(hipMemcpyToSymbolAsync(
+      HIP_SYMBOL(globalTaskManager), &params->managerHost,
+      sizeof(TaskManagerType), 0, hipMemcpyHostToDevice, params->stream));
+
+  HIP_ERROR_CHECK(hipOccupancyMaxActiveBlocksPerMultiprocessor(
+      &params->blocksPerKernel, taskSystemGemmKernel<M_SIZE, N_SIZE>, THREADS,
+      0));
+
+  params->blockDim = dim3(THREADS, 1, 1);
+  params->gridDim = dim3(MI_300X_SM_SIZE * params->blocksPerKernel, 1, 1);
+
+  *state = params;
+
+  return hipSuccess;
+}
+
+hipError_t deinitTaskSystemGemm(void* state) {
+  TaskSystemGemmParams* params = static_cast<TaskSystemGemmParams*>(state);
+  HIP_ERROR_CHECK(params->managerHost.Deinit(params->stream));
+  delete params;
+  return hipSuccess;
+}
+
+hipError_t taskSystemGemm(void* state, const float* A, const float* B, float* C,
+                          int M, int N, int K) {
+  TaskSystemGemmParams* params = static_cast<TaskSystemGemmParams*>(state);
+  constexpr int M_SIZE = 2048;
+  constexpr int N_SIZE = 1536;
   const int k_size = 2048;
   assert(K == 2048);
-  assert(M == m_size);
-  assert(N == n_size);
+  assert(M == M_SIZE);
+  assert(N == N_SIZE);
 
-  hipStream_t stream = 0;
-  TaskManagerType managerHost;
-  const int expectedNumTasks = (m_size / TILE_M) * (n_size / TILE_N);
-  HIP_ERROR_CHECK(managerHost.Init(stream, expectedNumTasks));
+  const int expectedNumTasks = (M / TILE_M) * (N / TILE_N);
+  HIP_ERROR_CHECK(params->managerHost.PrepareForNextLaunch(params->stream,
+                                                           expectedNumTasks));
 
-  HIP_ERROR_CHECK(hipMemcpyToSymbolAsync(HIP_SYMBOL(globalTaskManager),
-                                         &managerHost, sizeof(TaskManagerType),
-                                         0, hipMemcpyHostToDevice, stream));
+  taskSystemGemmKernel<M_SIZE, N_SIZE>
+      <<<params->gridDim, params->blockDim, 0, params->stream>>>(A, B, C);
 
-  int blocksPerKernel;
-  HIP_ERROR_CHECK(hipOccupancyMaxActiveBlocksPerMultiprocessor(
-      &blocksPerKernel, taskSystemGemmKernel<m_size, n_size>, THREADS, 0));
-
-  // printf("blocksPerKernel: %i\n", blocksPerKernel);
-
-  dim3 blockDim(THREADS, 1, 1);
-  dim3 gridDim(MI_300X_SM_SIZE * blocksPerKernel, 1, 1);
-
-  taskSystemGemmKernel<m_size, n_size><<<gridDim, blockDim, 0, 0>>>(A, B, C);
-
-  HIP_ERROR_CHECK(managerHost.Deinit(stream));
   return hipSuccess;
 }

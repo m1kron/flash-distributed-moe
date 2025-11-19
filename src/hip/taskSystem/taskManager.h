@@ -14,10 +14,14 @@ struct TaskManager {
   using TTaskType = TTask;
 
   // Initializes task manager on host.
-  __host__ hipError_t Init(hipStream_t stream, unsigned expectedMaxTasks);
+  __host__ hipError_t Init(hipStream_t stream);
 
   // Deinitializes task manager on host.
   __host__ hipError_t Deinit(hipStream_t stream);
+
+  // Prepares for next launch(clears the state).
+  __host__ hipError_t PrepareForNextLaunch(hipStream_t stream,
+                                           unsigned expectedMaxTasks);
 
   // Gets the current number of executed tasks.
   __device__ uint32_t GetCurrentExecutedTasks() const;
@@ -59,20 +63,14 @@ struct TaskManager {
 
 /////////////////////////////////////////////////////////////////
 template <typename TTask, unsigned int SIZE>
-inline __host__ hipError_t
-TaskManager<TTask, SIZE>::Init(hipStream_t stream, unsigned expectedMaxTasks) {
+inline __host__ hipError_t TaskManager<TTask, SIZE>::Init(hipStream_t stream) {
   // TODO: allocated all neeeded mem with single call.
   HIP_ERROR_CHECK(m_workQueue.Init(stream));
   HIP_ERROR_CHECK(m_tasksAlloc.Init(stream));
   HIP_ERROR_CHECK(
       hipMallocAsync(&m_expectedMaxTasks, sizeof(uint32_t), stream));
-  HIP_ERROR_CHECK(hipMemcpyAsync(m_expectedMaxTasks, &expectedMaxTasks,
-                                 sizeof(uint32_t), hipMemcpyHostToDevice,
-                                 stream));
   HIP_ERROR_CHECK(
       hipMallocAsync(&m_currentExecutedTasks, sizeof(uint32_t), stream));
-  HIP_ERROR_CHECK(
-      hipMemsetAsync(m_currentExecutedTasks, 0, sizeof(uint32_t), stream));
   return hipSuccess;
 }
 
@@ -84,6 +82,20 @@ TaskManager<TTask, SIZE>::Deinit(hipStream_t stream) {
   HIP_ERROR_CHECK(m_tasksAlloc.Deinit(stream));
   HIP_ERROR_CHECK(hipFreeAsync(m_expectedMaxTasks, stream));
   HIP_ERROR_CHECK(hipFreeAsync(m_currentExecutedTasks, stream));
+  return hipSuccess;
+}
+
+/////////////////////////////////////////////////////////////////
+template <typename TTask, unsigned int SIZE>
+inline __host__ hipError_t TaskManager<TTask, SIZE>::PrepareForNextLaunch(
+    hipStream_t stream, unsigned expectedMaxTasks) {
+  HIP_ERROR_CHECK(m_workQueue.PrepareForNextLaunch(stream));
+  HIP_ERROR_CHECK(m_tasksAlloc.PrepareForNextLaunch(stream));
+  HIP_ERROR_CHECK(hipMemcpyAsync(m_expectedMaxTasks, &expectedMaxTasks,
+                                 sizeof(uint32_t), hipMemcpyHostToDevice,
+                                 stream));
+  HIP_ERROR_CHECK(
+      hipMemsetAsync(m_currentExecutedTasks, 0, sizeof(uint32_t), stream));
   return hipSuccess;
 }
 

@@ -253,7 +253,8 @@ static hipError_t refHipGatefRoutingExperts(const float* tokens,
       TOKENS_NUM * TOPK * (EXPERT_INTERMEDIATE_SIZE / EXPERT_TILE_SIZE);
   const int ffn2TasksNum = TOKENS_NUM * TOPK * (HIDDEN_SIZE / EXPERT_TILE_SIZE);
   const int expectedNumTasks = ffn1TasksNum + ffn2TasksNum;
-  HIP_ERROR_CHECK(managerHost.Init(stream, expectedNumTasks));
+  HIP_ERROR_CHECK(managerHost.Init(stream));
+  HIP_ERROR_CHECK(managerHost.PrepareForNextLaunch(stream, expectedNumTasks));
 
   int* ffn1SyncArray;
   HIP_ERROR_CHECK(

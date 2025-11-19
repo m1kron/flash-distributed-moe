@@ -296,7 +296,8 @@ static hipError_t refHipFullMoe(const float* tokens, const float* gateWeights,
   constexpr int reductionTasksNum = TOKENS_NUM * REDUCTION_CHUNKS_PER_TOKEN;
   constexpr int expectedNumTasks =
       ffn1TasksNum + ffn2TasksNum + reductionTasksNum;
-  HIP_ERROR_CHECK(managerHost.Init(stream, expectedNumTasks));
+  HIP_ERROR_CHECK(managerHost.Init(stream));
+  HIP_ERROR_CHECK(managerHost.PrepareForNextLaunch(stream, expectedNumTasks));
 
   int* ffn1SyncArray;
   HIP_ERROR_CHECK(

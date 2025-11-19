@@ -8,6 +8,17 @@
 #include "taskSystemGemmKernel.h"
 
 namespace {
+
+hipError_t taskSystemGemmFunc(const float* A, const float* B, float* C, int M,
+                              int N, int K) {
+  void* state = nullptr;
+  hipError_t error = hipSuccess;
+  error = initTaskSystemGemm(&state);
+  error = taskSystemGemm(state, A, B, C, M, N, K);
+  error = deinitTaskSystemGemm(state);
+  return error;
+}
+
 template <typename TFunc>
 void PerformGemmCorrectnessTest(const TFunc func) {
   // Prepare input buffers for module
@@ -58,8 +69,8 @@ void PerformGemmCorrectnessTest(const TFunc func) {
 }
 
 TEST(TaskSystemUnittests, TaskSystemGemm) {
-  PerformGemmCorrectnessTest(taskSystemGemm);
+  PerformGemmCorrectnessTest(taskSystemGemmFunc);
 }
 
 TEST(TaskSystemUnittests, RefGemm) { PerformGemmCorrectnessTest(staticGemm); }
-}
+}  // namespace

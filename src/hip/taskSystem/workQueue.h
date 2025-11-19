@@ -18,6 +18,9 @@ struct WorkQueue {
   // Deinitializes queue on host, frees allocated memory.
   __host__ hipError_t Deinit(hipStream_t stream);
 
+  // Prepares for next launch(clears the state).
+  __host__ hipError_t PrepareForNextLaunch(hipStream_t stream);
+
   // Pushes item to the queue in device code, returns false if out of slots.
   __device__ bool Push(T* item_global_ptr);
 
@@ -46,13 +49,6 @@ inline __host__ hipError_t WorkQueue<T, SIZE>::Init(hipStream_t stream) {
       hipMallocAsync(&m_workQueue, SIZE * sizeof(QueueSlot), stream));
   HIP_ERROR_CHECK(hipMallocAsync(&m_headIdx, sizeof(int*), stream));
   HIP_ERROR_CHECK(hipMallocAsync(&m_tailIdx, sizeof(int*), stream));
-
-  HIP_ERROR_CHECK(
-      hipMemsetAsync(m_workQueue, 0, SIZE * sizeof(QueueSlot), stream));
-  HIP_ERROR_CHECK(
-      hipMemsetAsync(m_headIdx, 0, sizeof(unsigned int), stream));
-  HIP_ERROR_CHECK(
-      hipMemsetAsync(m_tailIdx, 0, sizeof(unsigned int), stream));
   return hipSuccess;
 }
 
@@ -62,6 +58,17 @@ inline __host__ hipError_t WorkQueue<T, SIZE>::Deinit(hipStream_t stream) {
   HIP_ERROR_CHECK(hipFreeAsync(m_tailIdx, stream));
   HIP_ERROR_CHECK(hipFreeAsync(m_headIdx, stream));
   HIP_ERROR_CHECK(hipFreeAsync(m_workQueue, stream));
+  return hipSuccess;
+}
+
+/////////////////////////////////////////////////////////////////
+template <typename T, unsigned int SIZE>
+inline __host__ hipError_t
+WorkQueue<T, SIZE>::PrepareForNextLaunch(hipStream_t stream) {
+  HIP_ERROR_CHECK(
+      hipMemsetAsync(m_workQueue, 0, SIZE * sizeof(QueueSlot), stream));
+  HIP_ERROR_CHECK(hipMemsetAsync(m_headIdx, 0, sizeof(unsigned int), stream));
+  HIP_ERROR_CHECK(hipMemsetAsync(m_tailIdx, 0, sizeof(unsigned int), stream));
   return hipSuccess;
 }
 

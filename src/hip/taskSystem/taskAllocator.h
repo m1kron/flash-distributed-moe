@@ -11,6 +11,9 @@ struct TaskAllocator {
   // Deinitializes allocator on host, frees allocated memory.
   __host__ hipError_t Deinit(hipStream_t stream);
 
+  // Prepares for next launch(clears the state).
+  __host__ hipError_t PrepareForNextLaunch(hipStream_t stream);
+
   // Allocates new task in device code, returns nullptr if out of memory.
   __device__ T* Allocate();
 
@@ -31,9 +34,8 @@ struct TaskAllocator {
 template <typename T, unsigned int SIZE>
 inline __host__ hipError_t TaskAllocator<T, SIZE>::Init(hipStream_t stream) {
   HIP_ERROR_CHECK(hipMallocAsync(&m_allocatedIdx, sizeof(uint32_t), stream));
-  HIP_ERROR_CHECK(hipMemsetAsync(m_allocatedIdx, 0, sizeof(uint32_t), stream));
   HIP_ERROR_CHECK(hipMallocAsync(&m_buffer, SIZE * sizeof(T), stream));
-  HIP_ERROR_CHECK(hipMemsetAsync(m_buffer, 0, SIZE * sizeof(T), stream));
+
   return hipSuccess;
 }
 
@@ -42,6 +44,15 @@ template <typename T, unsigned int SIZE>
 inline __host__ hipError_t TaskAllocator<T, SIZE>::Deinit(hipStream_t stream) {
   HIP_ERROR_CHECK(hipFreeAsync(m_buffer, stream));
   HIP_ERROR_CHECK(hipFreeAsync(m_allocatedIdx, stream));
+  return hipSuccess;
+}
+
+/////////////////////////////////////////////////////////////////
+template <typename T, unsigned int SIZE>
+inline __host__ hipError_t
+TaskAllocator<T, SIZE>::PrepareForNextLaunch(hipStream_t stream) {
+  HIP_ERROR_CHECK(hipMemsetAsync(m_allocatedIdx, 0, sizeof(uint32_t), stream));
+  HIP_ERROR_CHECK(hipMemsetAsync(m_buffer, 0, SIZE * sizeof(T), stream));
   return hipSuccess;
 }
 

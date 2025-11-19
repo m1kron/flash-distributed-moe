@@ -152,7 +152,8 @@ static hipError_t refHipRouting(const float* tokens, const float* gateWeights,
   TaskManagerType managerHost;
   const int expectedNumTasks =
       TOKENS_NUM * TOPK * (EXPERT_INTERMEDIATE_SIZE / EXPERT_TILE_SIZE);
-  HIP_ERROR_CHECK(managerHost.Init(stream, expectedNumTasks));
+  HIP_ERROR_CHECK(managerHost.Init(stream));
+  HIP_ERROR_CHECK(managerHost.PrepareForNextLaunch(stream, expectedNumTasks));
 
   HIP_ERROR_CHECK(hipMemcpyToSymbolAsync(HIP_SYMBOL(globalTaskManager),
                                          &managerHost, sizeof(TaskManagerType),
