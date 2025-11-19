@@ -1,19 +1,16 @@
-#include <hip/hip_runtime.h>
+#include "moeKernelLauncher.h"
+#include "src/hip/hipHostCommon.h"
+#include "src/hip/taskSystem/taskManager.h"
+#include "src/hip/taskSystem/workerLoop.h"
+#include "src/hip/tasks/internal/expertFFN1.h"
+#include "src/hip/tasks/internal/gemmTileBlock.h"
+#include "src/hip/tasks/internal/reduceBlock.h"
+#include "src/hip/tasks/internal/softmaxBlock.h"
+#include "src/hip/tasks/internal/topkBlock.h"
+#include "src/hip/utils/hipDeviceUtils.h"
 
-#include "../../../src/hip/hipHostCommon.h"
-#include "../../../src/hip/taskSystem/taskManager.h"
-#include "../../../src/hip/taskSystem/workerLoop.h"
-#include "../../../src/hip/tasks/internal/expertFFN1.h"
-#include "../../../src/hip/tasks/internal/gemmTileBlock.h"
-#include "../../../src/hip/tasks/internal/reduceBlock.h"
-#include "../../../src/hip/tasks/internal/softmaxBlock.h"
-#include "../../../src/hip/tasks/internal/topkBlock.h"
-#include "../../../src/hip/utils/hipDeviceUtils.h"
-#include "../reference/refFullMoe.h"
-#include "../utils/utils.h"
-#include "include/iMoeKernelLauncher.h"
+namespace moe {
 
-namespace {
 constexpr int TOKENS_NUM = 48;
 constexpr int EXPERTS_NUM = 128;
 constexpr int HIDDEN_SIZE = 2048;
@@ -58,6 +55,7 @@ struct __align__(16) ExpertTileTask {
 };
 
 using TaskManagerType = TaskManager<ExpertTileTask, 8192>;
+
 static __constant__ TaskManagerType globalTaskManager;
 static __constant__ int* globalFFN1SyncArray;
 static __constant__ int* globalChunkReduceSyncArray;
@@ -336,113 +334,31 @@ static hipError_t refHipFullMoe(const float* tokens, const float* gateWeights,
   return hipSuccess;
 }
 
-static void printResult(const float* result) {
-  for (int tokenIdx = 0; tokenIdx < TOKENS_NUM; ++tokenIdx) {
-    std::cout << "TokenIdx: " << tokenIdx << std::endl;
-    for (int j = 0; j < 10; ++j) {
-      std::cout << "|" << result[tokenIdx * HIDDEN_SIZE + j];
-    }
+struct InternalState {
+  TaskManagerType taskManager;
+};
 
-    std::cout << std::endl;
-  }
+////////////////////////////////////////////////////////////////
+hipError_t MoeKernelLauncher::Init(hipStream_t stream) {
+  m_internalState = new InternalState();
+  HIP_ERROR_CHECK(m_internalState->taskManager.Init(stream));
+  return hipSuccess;
 }
 
-TEST(MoeFull, basicTest) {
-  constexpr int TOKENS_SIZE = TOKENS_NUM * HIDDEN_SIZE;
-  constexpr int GATE_WEIGHTS_SIZE = HIDDEN_SIZE * EXPERTS_NUM;
-  constexpr int ROUTING_SIZE = TOKENS_NUM * TOPK;
-  constexpr int EXPERTS_FNN1_WEIGHTS_SIZE =
-      EXPERTS_NUM * HIDDEN_SIZE * EXPERT_INTERMEDIATE_SIZE * 2;
-  constexpr int FFN1_OUTPUT_SIZE = TOKENS_NUM * TOPK * EXPERT_INTERMEDIATE_SIZE;
-  constexpr int EXPERTS_FNN2_WEIGHTS_SIZE =
-      EXPERTS_NUM * HIDDEN_SIZE * EXPERT_INTERMEDIATE_SIZE;
-  constexpr int FFN2_OUTPUT_SIZE = TOKENS_NUM * TOPK * HIDDEN_SIZE;
-  constexpr int FINAL_OUTPUT_SIZE = TOKENS_NUM * HIDDEN_SIZE;
-
-  std::vector<float> tokens_host =
-      RandomVector<float>(TOKENS_SIZE, -1.0f, 1.0f);
-  std::vector<float> gateWeights_host =
-      RandomVector<float>(GATE_WEIGHTS_SIZE, -0.1f, 0.1f);
-  std::vector<float> host_topkVals(ROUTING_SIZE);
-  std::vector<int> host_topkIdx(ROUTING_SIZE);
-  std::vector<float> expertFFN1Weights_host =
-      RandomVector<float>(EXPERTS_FNN1_WEIGHTS_SIZE, -0.1f, 0.1f);
-  std::vector<float> expertFFN2Weights_host =
-      RandomVector<float>(EXPERTS_FNN2_WEIGHTS_SIZE, -0.1f, 0.1f);
-
-  std::vector<float> output_host(FINAL_OUTPUT_SIZE, 0.0f);
-
-  float* tokens_device = nullptr;
-  float* gateWeights_device = nullptr;
-  float* expertFFN1Weights_device = nullptr;
-  float* expertFFN2Weights_device = nullptr;
-  float* ffn1Output_device = nullptr;
-  float* ffn2Output_device = nullptr;
-  float* finalOutput_device = nullptr;
-
-  hipStream_t stream = 0;
-  moe::IMoeKernelLauncher* launcher = nullptr;
-  HIP_ERROR_ASSERT(CreateLauncher(&launcher, stream));
-
-  HIP_ERROR_ASSERT(hipMalloc(&tokens_device, TOKENS_SIZE * sizeof(float)));
-  HIP_ERROR_ASSERT(
-      hipMalloc(&gateWeights_device, GATE_WEIGHTS_SIZE * sizeof(float)));
-  HIP_ERROR_ASSERT(hipMalloc(&expertFFN1Weights_device,
-                             EXPERTS_FNN1_WEIGHTS_SIZE * sizeof(float)));
-  HIP_ERROR_ASSERT(hipMalloc(&expertFFN2Weights_device,
-                             EXPERTS_FNN2_WEIGHTS_SIZE * sizeof(float)));
-  HIP_ERROR_ASSERT(
-      hipMalloc(&ffn1Output_device, FFN1_OUTPUT_SIZE * sizeof(float)));
-  HIP_ERROR_ASSERT(
-      hipMalloc(&ffn2Output_device, FFN2_OUTPUT_SIZE * sizeof(float)));
-  HIP_ERROR_ASSERT(
-      hipMalloc(&finalOutput_device, FINAL_OUTPUT_SIZE * sizeof(float)));
-
-  HIP_ERROR_ASSERT(hipMemcpy(tokens_device, tokens_host.data(),
-                             TOKENS_SIZE * sizeof(float),
-                             hipMemcpyHostToDevice));
-  HIP_ERROR_ASSERT(hipMemcpy(gateWeights_device, gateWeights_host.data(),
-                             GATE_WEIGHTS_SIZE * sizeof(float),
-                             hipMemcpyHostToDevice));
-  HIP_ERROR_ASSERT(hipMemcpy(
-      expertFFN1Weights_device, expertFFN1Weights_host.data(),
-      EXPERTS_FNN1_WEIGHTS_SIZE * sizeof(float), hipMemcpyHostToDevice));
-  HIP_ERROR_ASSERT(hipMemcpy(
-      expertFFN2Weights_device, expertFFN2Weights_host.data(),
-      EXPERTS_FNN2_WEIGHTS_SIZE * sizeof(float), hipMemcpyHostToDevice));
-
-  HIP_ERROR_ASSERT(refHipFullMoe(
-      tokens_device, gateWeights_device, expertFFN1Weights_device,
-      expertFFN2Weights_device, ffn1Output_device, ffn2Output_device,
-      finalOutput_device, TOKENS_NUM, EXPERTS_NUM, HIDDEN_SIZE));
-
-  HIP_ERROR_ASSERT(hipDeviceSynchronize())
-  HIP_ERROR_ASSERT(hipGetLastError());
-
-  HIP_ERROR_ASSERT(hipMemcpy(output_host.data(), finalOutput_device,
-                             FINAL_OUTPUT_SIZE * sizeof(float),
-                             hipMemcpyDeviceToHost));
-
-  // Free device memory.
-  HIP_ERROR_ASSERT(hipFree(tokens_device));
-  HIP_ERROR_ASSERT(hipFree(gateWeights_device));
-  HIP_ERROR_ASSERT(hipFree(expertFFN1Weights_device));
-  HIP_ERROR_ASSERT(hipFree(expertFFN2Weights_device));
-  HIP_ERROR_ASSERT(hipFree(ffn1Output_device));
-  HIP_ERROR_ASSERT(hipFree(ffn2Output_device));
-  HIP_ERROR_ASSERT(hipFree(finalOutput_device));
-
-  HIP_ERROR_ASSERT(DestroyLauncher(launcher, stream));
-
-  auto refOut = test::refFullMoe(
-      tokens_host.data(), gateWeights_host.data(),
-      expertFFN1Weights_host.data(), expertFFN2Weights_host.data(), TOKENS_NUM,
-      EXPERTS_NUM, HIDDEN_SIZE, TOPK, EXPERT_INTERMEDIATE_SIZE);
-
-  // printResult(refOut.data());
-
-  ASSERT_EQ(output_host.size(), refOut.size());
-  CheckAgainstRefBuffer(output_host.data(), refOut.data(), refOut.size(),
-                        1e-5f);
+////////////////////////////////////////////////////////////////
+hipError_t MoeKernelLauncher::Deinit(hipStream_t stream) {
+  HIP_ERROR_CHECK(m_internalState->taskManager.Deinit(stream));
+  return hipSuccess;
 }
-}  // namespace
+
+////////////////////////////////////////////////////////////////
+hipError_t MoeKernelLauncher::Launch(const float* tokens,
+                                     const float* gateWeights,
+                                     const float* ffn1ExpertWeights,
+                                     const float* ffn2ExpertWeights,
+                                     float* output, int tokensNum,
+                                     hipStream_t stream) {
+  return hipSuccess;
+}
+
+}  // namespace moe

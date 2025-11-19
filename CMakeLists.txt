@@ -30,5 +30,7 @@ target_link_libraries(${FLASH_MOE_LIB_NAME} PRIVATE hip::host)
 set_source_files_properties(${HIP_SRC} PROPERTIES LANGUAGE HIP)
 set_target_properties(${FLASH_MOE_LIB_NAME} PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+set(FLASH_MOE_LIB_INCLUDE ${PROJECT_SOURCE_DIR}) 
+
 # Build unittests:
 add_subdirectory(test/cpp/)

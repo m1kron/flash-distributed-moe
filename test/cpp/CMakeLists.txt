@@ -18,10 +18,10 @@ FetchContent_Declare(
   GIT_TAG main)
 FetchContent_MakeAvailable(googletest)
 
-
 file(GLOB_RECURSE CPP_SOURCES ${PROJECT_SOURCE_DIR}/*.cpp)
 file(GLOB_RECURSE HIP_SOURCES ${PROJECT_SOURCE_DIR}/*.hip)
 set_source_files_properties(${HIP_SOURCES} PROPERTIES LANGUAGE HIP)
 add_executable(${app_name} ${CPP_SOURCES} ${HIP_SOURCES})
+target_include_directories(${app_name} PRIVATE ${FLASH_MOE_LIB_INCLUDE})
 target_compile_definitions(${app_name} PRIVATE __HIP_PLATFORM_AMD__)
 target_link_libraries(${app_name} PRIVATE hip::host ${FLASH_MOE_LIB_NAME} gtest_main gtest)
