@@ -94,7 +94,9 @@ __global__ void __launch_bounds__(THREAD_BLOCK_SIZE,
 void runInplaceSaxpy(hipStream_t stream, int32_t* dataGpu, size_t dataSize) {
   TaskManagerType managerHost;
   const int blocksNum = dataSize / THREAD_BLOCK_SIZE;
-  HIP_ERROR_ASSERT(managerHost.Init(stream, blocksNum * 2));
+
+  HIP_ERROR_ASSERT(managerHost.Init(stream));
+  HIP_ERROR_ASSERT(managerHost.PrepareForNextLaunch(stream, blocksNum * 2));
 
   HIP_ERROR_ASSERT(hipMemcpyToSymbolAsync(HIP_SYMBOL(globalTaskManager),
                                           &managerHost, sizeof(TaskManagerType),

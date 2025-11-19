@@ -65,16 +65,19 @@ static float run_gpu_benchmark_tasksystem(const float* dA, const float* dB,
   HIP_CHECK(hipEventCreate(&start));
   HIP_CHECK(hipEventCreate(&stop));
 
+  void* state = nullptr;
+  HIP_CHECK(initTaskSystemGemm(&state));
+
   // Warmup
   HIP_CHECK(hipDeviceSynchronize());
   for (int i = 0; i < repetitions; ++i) {
-    HIP_CHECK(taskSystemGemm(dA, dB, dC, M, N, K));
+    HIP_CHECK(taskSystemGemm(state, dA, dB, dC, M, N, K));
   }
   HIP_CHECK(hipDeviceSynchronize());
 
   HIP_CHECK(hipEventRecord(start, 0));
   for (int i = 0; i < repetitions; ++i) {
-    HIP_CHECK(taskSystemGemm(dA, dB, dC, M, N, K));
+    HIP_CHECK(taskSystemGemm(state, dA, dB, dC, M, N, K));
   }
   HIP_CHECK(hipEventRecord(stop, 0));
   HIP_CHECK(hipEventSynchronize(stop));
@@ -83,6 +86,7 @@ static float run_gpu_benchmark_tasksystem(const float* dA, const float* dB,
   HIP_CHECK(hipEventElapsedTime(&ms, start, stop));
   HIP_CHECK(hipEventDestroy(start));
   HIP_CHECK(hipEventDestroy(stop));
+  HIP_CHECK(deinitTaskSystemGemm(state));
   return ms / float(repetitions);
 }
 
