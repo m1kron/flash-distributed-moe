@@ -90,7 +90,6 @@ __device__ void ExecuteExpertFFN1Task(const ExpertTileTask& task,
                                               task.blockTileColStartIdx);
 
   __threadfence();
-  // TODO: Is mem barrier needed?
   constexpr int N_CHUNKS = T_FFN1_TILE::N / T_FFN1_TILE::TILE_N;
   bool* lastBlock = reinterpret_cast<bool*>(sharedMemPool);
   if (threadIdx.x == 0) {
@@ -148,7 +147,6 @@ __device__ void ExecuteExpertFFN2Task(const ExpertTileTask& task,
                                               task.blockTileColStartIdx);
 
   __threadfence();
-  // TODO: Is mem barrier needed?
   constexpr int FFN2_DEP_SIZE = REDUCTION_TILE_SIZE / T_FFN2_TILE::TILE_N;
   constexpr int CHUNKS_NEED = FFN2_DEP_SIZE * TOPK;
   bool* lastBlock = reinterpret_cast<bool*>(sharedMemPool);
@@ -298,7 +296,6 @@ static hipError_t refHipFullMoe(const float* tokens, const float* gateWeights,
   constexpr int reductionTasksNum = TOKENS_NUM * REDUCTION_CHUNKS_PER_TOKEN;
   constexpr int expectedNumTasks =
       ffn1TasksNum + ffn2TasksNum + reductionTasksNum;
-  printf("expectedNumTasks: %i\n", expectedNumTasks);
   HIP_ERROR_CHECK(managerHost.Init(stream, expectedNumTasks));
 
   int* ffn1SyncArray;
