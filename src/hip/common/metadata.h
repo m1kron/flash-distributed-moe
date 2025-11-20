@@ -18,11 +18,8 @@ struct HWConfig {
   static constexpr int BLOCKS = 304;
 };
 
-// Moe impl metadata.
-struct MoeImplMetadata {
-  using MOE_PROBLEM_CONFIG = MoeProblemConfig;
-  using HW_CONFIG = HWConfig;
-
+template <typename HW_CONFIG, typename MOE_PROBLEM_CONFIG>
+struct TilesConfig {
   static constexpr int REDUCTION_TILE_SIZE = 512;
   static constexpr int REDUCTION_CHUNKS_PER_TOKEN =
       (MOE_PROBLEM_CONFIG::HIDDEN_SIZE / REDUCTION_TILE_SIZE);
@@ -46,6 +43,13 @@ struct MoeImplMetadata {
       GemmTileParams<MOE_PROBLEM_CONFIG::HIDDEN_SIZE,
                      MOE_PROBLEM_CONFIG::EXPERT_INTERMEDIATE_SIZE, TILE_M_SIZE,
                      EXPERTS_N_TILE_SIZE, TILE_K_SIZE, HW_CONFIG::THREADS>;
+};
+
+// Moe impl metadata.
+struct MoeImplMetadata {
+  using MOE_PROBLEM_CONFIG = MoeProblemConfig;
+  using HW_CONFIG = HWConfig;
+  using TILES_CONFIG = TilesConfig<HW_CONFIG, MoeProblemConfig>;
 };
 
 }  // namespace moe

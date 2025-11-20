@@ -8,9 +8,9 @@ namespace moe {
 class IMoeKernelLauncher {
  public:
   // Launches the kernel.
-  virtual hipError_t Launch(const float* tokens, const float* gateWeights,
-                            const float* ffn1ExpertWeights,
-                            const float* ffn2ExpertWeights, float* output,
+  virtual hipError_t Launch(const void* tokens, const void* gateWeights,
+                            const void* ffn1ExpertWeights,
+                            const void* ffn2ExpertWeights, void* output,
                             int tokensNum, hipStream_t stream) = 0;
 
   // Dtor
