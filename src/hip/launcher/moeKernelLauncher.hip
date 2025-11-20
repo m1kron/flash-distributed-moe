@@ -1,4 +1,5 @@
 #include "moeKernelLauncher.h"
+#include "src/hip/common/metadata.h"
 #include "src/hip/hipHostCommon.h"
 #include "src/hip/taskSystem/taskManager.h"
 #include "src/hip/taskSystem/workerLoop.h"
@@ -15,27 +16,8 @@ constexpr int HIDDEN_SIZE = 2048;
 constexpr int EXPERT_INTERMEDIATE_SIZE = 768;
 constexpr int TOPK = 8;
 constexpr int THREADS = 128;
-constexpr int BLOCKS = 304;
 constexpr int REDUCTION_TILE_SIZE = 512;
 constexpr int REDUCTION_CHUNKS_PER_TOKEN = (HIDDEN_SIZE / REDUCTION_TILE_SIZE);
-
-// Gate => tokens[TOKENS_NUM,HIDDEN_SIZE] * gate[HIDDEN_SIZE,EXPERTS_NUM] =>
-// routing[TOKENS_NUM,EXPERTS_NUM]
-using TGateGemmTileParams =
-    GemmTileParams<EXPERTS_NUM, HIDDEN_SIZE, 1, EXPERTS_NUM, 32, THREADS>;
-
-constexpr int EXPERT_TILE_SIZE = 256;
-// Expert => token[1,HIDDEN_SIZE] *
-// expertW[HIDDEN_SIZE,EXPERT_INTERMEDIATE_SIZE] => [1,EXPERT_INTERMEDIATE_SIZE]
-using TExpertFFN1TileParams =
-    GemmTileParams<EXPERT_INTERMEDIATE_SIZE, HIDDEN_SIZE, 1, EXPERT_TILE_SIZE,
-                   32, THREADS>;
-
-// Expert => token[1,EXPERT_INTERMEDIATE_SIZE] *
-// expertW[EXPERT_INTERMEDIATE_SIZE,HIDDEN_SIZE] => [1,HIDDEN_SIZE]
-using TExpertFFN2TileParams =
-    GemmTileParams<HIDDEN_SIZE, EXPERT_INTERMEDIATE_SIZE, 1, EXPERT_TILE_SIZE,
-                   32, THREADS>;
 
 struct __align__(16) ExpertTileTask {
   const float* __restrict__ ffn1ExpertWeights;
@@ -204,30 +186,31 @@ constexpr __device__ T max(T a, T b) {
   return a > b ? a : b;
 }
 
-template <typename T_GATE_TILE, typename T_FFN1_TILE, typename T_FFN2_TILE>
-__global__ void refHipFullMoeKernel(const float* __restrict__ tokens,
-                                    const float* __restrict__ gateWeights,
-                                    const float* __restrict__ ffn1ExpertWeights,
-                                    const float* __restrict__ ffn2ExpertWeights,
-                                    float* __restrict__ ffn1Output,
-                                    float* __restrict__ ffn2Output,
-                                    float* __restrict__ finalOutput,
-                                    int TOKENS_NUM) {
+template <typename MOE_METADATA>
+__global__ void moeKernel(const float* __restrict__ tokens,
+                          const float* __restrict__ gateWeights,
+                          const float* __restrict__ ffn1ExpertWeights,
+                          const float* __restrict__ ffn2ExpertWeights,
+                          float* __restrict__ ffn1Output,
+                          float* __restrict__ ffn2Output,
+                          float* __restrict__ finalOutput, int TOKENS_NUM) {
   constexpr int SHARED_MEM_SIZE_BYTES =
-      max(T_GATE_TILE::SHARED_MEM_NEEDES_BYTES,
-          max(T_FFN1_TILE::SHARED_MEM_NEEDES_BYTES,
-              T_FFN2_TILE::SHARED_MEM_NEEDES_BYTES));
+      max(MOE_METADATA::GATE_TILE_METADATA::SHARED_MEM_NEEDES_BYTES,
+          max(MOE_METADATA::FFN1_TILE_METADATA::SHARED_MEM_NEEDES_BYTES,
+              MOE_METADATA::FFN2_TILE_METADATA::SHARED_MEM_NEEDES_BYTES));
 
   __shared__ char sharedMemPool[SHARED_MEM_SIZE_BYTES];
 
   for (int tokenIdx = blockIdx.x; tokenIdx < TOKENS_NUM;
        tokenIdx += gridDim.x) {
-    typename T_GATE_TILE::TOutputType out_regs[T_GATE_TILE::THREAD_OUTPUT_SIZE];
+    typename MOE_METADATA::GATE_TILE_METADATA::TOutputType
+        out_regs[MOE_METADATA::GATE_TILE_METADATA::THREAD_OUTPUT_SIZE];
 
-    GemmTile_block<T_GATE_TILE>(tokens, gateWeights, out_regs, tokenIdx, 0,
-                                sharedMemPool);
+    GemmTile_block<typename MOE_METADATA::GATE_TILE_METADATA>(
+        tokens, gateWeights, out_regs, tokenIdx, 0, sharedMemPool);
     out_regs[0] =
-        Softmax_block<T_GATE_TILE::THREADS, float>(out_regs[0], sharedMemPool);
+        Softmax_block<MOE_METADATA::GATE_TILE_METADATA::THREADS, float>(
+            out_regs[0], sharedMemPool);
 
     char* sharedMemPoolBytes = reinterpret_cast<char*>(sharedMemPool);
     float* s_topkVals = reinterpret_cast<float*>(sharedMemPoolBytes);
@@ -235,8 +218,8 @@ __global__ void refHipFullMoeKernel(const float* __restrict__ tokens,
         reinterpret_cast<int*>(sharedMemPoolBytes + sizeof(float) * TOPK);
     int* nextPool = s_topkIdx + TOPK;
 
-    Topk8_block<T_GATE_TILE::THREADS, float>(out_regs[0], s_topkVals, s_topkIdx,
-                                             nextPool);
+    Topk8_block<MOE_METADATA::GATE_TILE_METADATA::THREADS, float>(
+        out_regs[0], s_topkVals, s_topkIdx, nextPool);
 
     // Warp 0 pushes all the tasks...
     for (int i = 0; i < TOPK; ++i) {
@@ -266,9 +249,11 @@ __global__ void refHipFullMoeKernel(const float* __restrict__ tokens,
     }
   }
 
-  workerTaskSystemLoop_block(globalTaskManager,
-                             ExecuteGeneralTask<T_FFN1_TILE, T_FFN2_TILE>,
-                             sharedMemPool);
+  workerTaskSystemLoop_block(
+      globalTaskManager,
+      ExecuteGeneralTask<typename MOE_METADATA::FFN1_TILE_METADATA,
+                         typename MOE_METADATA::FFN2_TILE_METADATA>,
+      sharedMemPool);
 }
 
 struct InternalState {
@@ -279,33 +264,39 @@ struct InternalState {
   float* ffn2Output_device;
 };
 
-static hipError_t refHipFullMoe(InternalState* state, const float* tokens,
-                                const float* gateWeights,
-                                const float* ffn1ExpertWeights,
-                                const float* ffn2ExpertWeights, float* output,
-                                int tokensNum, hipStream_t stream) {
-  assert(tokensNum == TOKENS_NUM);
-  assert(expertsNum == EXPERTS_NUM);
-
-  dim3 grid(BLOCKS);
-  dim3 block(TGateGemmTileParams::THREADS);
+template <typename MOE_METADATA>
+static hipError_t moeKernelLaunchFunc(InternalState* state, const float* tokens,
+                                      const float* gateWeights,
+                                      const float* ffn1ExpertWeights,
+                                      const float* ffn2ExpertWeights,
+                                      float* output, int tokensNum,
+                                      hipStream_t stream) {
+  dim3 grid(MOE_METADATA::HW_CONFIG::BLOCKS);
+  dim3 block(MOE_METADATA::HW_CONFIG::THREADS);
   const int ffn1TasksNum =
-      tokensNum * TOPK * (EXPERT_INTERMEDIATE_SIZE / EXPERT_TILE_SIZE);
-  const int ffn2TasksNum = tokensNum * TOPK * (HIDDEN_SIZE / EXPERT_TILE_SIZE);
-  const int reductionTasksNum = tokensNum * REDUCTION_CHUNKS_PER_TOKEN;
+      tokensNum * MOE_METADATA::MOE_PROBLEM_CONFIG::TOPK *
+      (MOE_METADATA::MOE_PROBLEM_CONFIG::EXPERT_INTERMEDIATE_SIZE /
+       MOE_METADATA::FFN1_TILE_METADATA::TILE_N);
+  const int ffn2TasksNum = tokensNum * MOE_METADATA::MOE_PROBLEM_CONFIG::TOPK *
+                           (MOE_METADATA::MOE_PROBLEM_CONFIG::HIDDEN_SIZE /
+                            MOE_METADATA::FFN2_TILE_METADATA::TILE_N);
+  const int reductionTasksNum =
+      tokensNum * MOE_METADATA::REDUCTION_CHUNKS_PER_TOKEN;
   const int expectedNumTasks = ffn1TasksNum + ffn2TasksNum + reductionTasksNum;
   HIP_ERROR_CHECK(
       state->taskManagerHost.PrepareForNextLaunch(stream, expectedNumTasks));
 
-  HIP_ERROR_CHECK(hipMemsetAsync(state->ffn1SyncArrayDevice, 0,
-                                 sizeof(int) * tokensNum * TOPK, stream));
+  HIP_ERROR_CHECK(hipMemsetAsync(
+      state->ffn1SyncArrayDevice, 0,
+      sizeof(int) * tokensNum * MOE_METADATA::MOE_PROBLEM_CONFIG::TOPK,
+      stream));
 
   HIP_ERROR_CHECK(hipMemsetAsync(
       state->chunkReduceSyncArrayDevice, 0,
-      sizeof(int) * tokensNum * REDUCTION_CHUNKS_PER_TOKEN, stream));
+      sizeof(int) * tokensNum * MOE_METADATA::REDUCTION_CHUNKS_PER_TOKEN,
+      stream));
 
-  refHipFullMoeKernel<TGateGemmTileParams, TExpertFFN1TileParams,
-                      TExpertFFN2TileParams><<<grid, block, 0, 0>>>(
+  moeKernel<MOE_METADATA><<<grid, block, 0, stream>>>(
       tokens, gateWeights, ffn1ExpertWeights, ffn2ExpertWeights,
       state->ffn1Output_device, state->ffn2Output_device, output, tokensNum);
 
@@ -316,23 +307,31 @@ static hipError_t refHipFullMoe(InternalState* state, const float* tokens,
 hipError_t MoeKernelLauncher::Init(hipStream_t stream, int maxTokens) {
   m_internalState = new InternalState();
 
-  const int ffn1OutputSize = maxTokens * TOPK * EXPERT_INTERMEDIATE_SIZE;
-  const int ffn2OutputSize = maxTokens * TOPK * HIDDEN_SIZE;
+  const int ffn1OutputSize =
+      maxTokens * moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::TOPK *
+      moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::EXPERT_INTERMEDIATE_SIZE;
+  const int ffn2OutputSize =
+      maxTokens * moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::TOPK *
+      moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::HIDDEN_SIZE;
 
   HIP_ERROR_CHECK(m_internalState->taskManagerHost.Init(stream));
   HIP_ERROR_CHECK(hipMemcpyToSymbolAsync(
       HIP_SYMBOL(globalTaskManager), &m_internalState->taskManagerHost,
       sizeof(TaskManagerType), 0, hipMemcpyHostToDevice, stream));
 
-  HIP_ERROR_CHECK(hipMallocAsync(&m_internalState->ffn1SyncArrayDevice,
-                                 sizeof(int) * maxTokens * TOPK, stream));
+  HIP_ERROR_CHECK(hipMallocAsync(
+      &m_internalState->ffn1SyncArrayDevice,
+      sizeof(int) * maxTokens * moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::TOPK,
+      stream));
   HIP_ERROR_CHECK(hipMemcpyToSymbolAsync(
       HIP_SYMBOL(globalFFN1SyncArray), &m_internalState->ffn1SyncArrayDevice,
       sizeof(int*), 0, hipMemcpyHostToDevice, stream));
 
-  HIP_ERROR_CHECK(hipMallocAsync(
-      &m_internalState->chunkReduceSyncArrayDevice,
-      sizeof(int) * maxTokens * REDUCTION_CHUNKS_PER_TOKEN, stream));
+  HIP_ERROR_CHECK(
+      hipMallocAsync(&m_internalState->chunkReduceSyncArrayDevice,
+                     sizeof(int) * maxTokens *
+                         moe::MoeImplMetadata::REDUCTION_CHUNKS_PER_TOKEN,
+                     stream));
   HIP_ERROR_CHECK(
       hipMemcpyToSymbolAsync(HIP_SYMBOL(globalChunkReduceSyncArray),
                              &m_internalState->chunkReduceSyncArrayDevice,
@@ -371,9 +370,9 @@ hipError_t MoeKernelLauncher::Launch(const float* tokens,
                                      const float* ffn2ExpertWeights,
                                      float* output, int tokensNum,
                                      hipStream_t stream) {
-  HIP_ERROR_CHECK(refHipFullMoe(m_internalState, tokens, gateWeights,
-                                ffn1ExpertWeights, ffn2ExpertWeights, output,
-                                tokensNum, stream));
+  HIP_ERROR_CHECK(moeKernelLaunchFunc<moe::MoeImplMetadata>(
+      m_internalState, tokens, gateWeights, ffn1ExpertWeights,
+      ffn2ExpertWeights, output, tokensNum, stream));
   return hipSuccess;
 }
 
