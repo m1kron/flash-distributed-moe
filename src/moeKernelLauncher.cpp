@@ -12,9 +12,9 @@ IMoeKernelLauncher::~IMoeKernelLauncher() {}
 
 ////////////////////////////////////////////////////////////////////
 extern "C" hipError_t CreateLauncher(moe::IMoeKernelLauncher** launcher,
-                                     hipStream_t stream) {
+                                     hipStream_t stream, int maxTokens) {
   moe::MoeKernelLauncher* _launcher = new moe::MoeKernelLauncher();
-  HIP_ERROR_CHECK(_launcher->Init(stream));
+  HIP_ERROR_CHECK(_launcher->Init(stream, maxTokens));
   *launcher = _launcher;
   return hipSuccess;
 }

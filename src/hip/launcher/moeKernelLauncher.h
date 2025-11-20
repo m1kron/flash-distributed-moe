@@ -15,7 +15,7 @@ class MoeKernelLauncher : public IMoeKernelLauncher {
   // ----
 
   // Initializes launcher.
-  hipError_t Init(hipStream_t stream);
+  hipError_t Init(hipStream_t stream, int maxTokens);
 
   // Deinitializes launcher.
   hipError_t Deinit(hipStream_t stream);

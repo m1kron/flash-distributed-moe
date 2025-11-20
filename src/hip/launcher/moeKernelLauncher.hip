@@ -10,8 +10,6 @@
 #include "src/hip/utils/hipDeviceUtils.h"
 
 namespace moe {
-
-constexpr int TOKENS_NUM = 48;
 constexpr int EXPERTS_NUM = 128;
 constexpr int HIDDEN_SIZE = 2048;
 constexpr int EXPERT_INTERMEDIATE_SIZE = 768;
@@ -273,81 +271,96 @@ __global__ void refHipFullMoeKernel(const float* __restrict__ tokens,
                              sharedMemPool);
 }
 
-static hipError_t refHipFullMoe(const float* tokens, const float* gateWeights,
+struct InternalState {
+  TaskManagerType taskManagerHost;
+  int* ffn1SyncArrayDevice;
+  int* chunkReduceSyncArrayDevice;
+  float* ffn1Output_device;
+  float* ffn2Output_device;
+};
+
+static hipError_t refHipFullMoe(InternalState* state, const float* tokens,
+                                const float* gateWeights,
                                 const float* ffn1ExpertWeights,
-                                const float* ffn2ExpertWeights,
-                                float* ffn1Output, float* ffn2Output,
-                                float* finalOutput, int tokensNum,
-                                int expertsNum, int hiddenSize) {
-  assert(hiddenSize == HIDDEN_SIZE);
+                                const float* ffn2ExpertWeights, float* output,
+                                int tokensNum, hipStream_t stream) {
   assert(tokensNum == TOKENS_NUM);
   assert(expertsNum == EXPERTS_NUM);
 
   dim3 grid(BLOCKS);
   dim3 block(TGateGemmTileParams::THREADS);
-
-  hipStream_t stream = 0;
-  TaskManagerType managerHost;
-  constexpr int ffn1TasksNum =
-      TOKENS_NUM * TOPK * (EXPERT_INTERMEDIATE_SIZE / EXPERT_TILE_SIZE);
-  constexpr int ffn2TasksNum =
-      TOKENS_NUM * TOPK * (HIDDEN_SIZE / EXPERT_TILE_SIZE);
-  constexpr int reductionTasksNum = TOKENS_NUM * REDUCTION_CHUNKS_PER_TOKEN;
-  constexpr int expectedNumTasks =
-      ffn1TasksNum + ffn2TasksNum + reductionTasksNum;
-  HIP_ERROR_CHECK(managerHost.Init(stream));
-  HIP_ERROR_CHECK(managerHost.PrepareForNextLaunch(stream, expectedNumTasks));
-
-  int* ffn1SyncArray;
+  const int ffn1TasksNum =
+      tokensNum * TOPK * (EXPERT_INTERMEDIATE_SIZE / EXPERT_TILE_SIZE);
+  const int ffn2TasksNum = tokensNum * TOPK * (HIDDEN_SIZE / EXPERT_TILE_SIZE);
+  const int reductionTasksNum = tokensNum * REDUCTION_CHUNKS_PER_TOKEN;
+  const int expectedNumTasks = ffn1TasksNum + ffn2TasksNum + reductionTasksNum;
   HIP_ERROR_CHECK(
-      hipMallocAsync(&ffn1SyncArray, sizeof(int) * TOKENS_NUM * TOPK, stream));
-  HIP_ERROR_CHECK(hipMemsetAsync(ffn1SyncArray, 0,
-                                 sizeof(int) * TOKENS_NUM * TOPK, stream));
-  HIP_ERROR_CHECK(hipMemcpyToSymbolAsync(HIP_SYMBOL(globalFFN1SyncArray),
-                                         &ffn1SyncArray, sizeof(int*), 0,
-                                         hipMemcpyHostToDevice, stream));
+      state->taskManagerHost.PrepareForNextLaunch(stream, expectedNumTasks));
 
-  int* chunkReduceSyncArray;
-  HIP_ERROR_CHECK(hipMallocAsync(
-      &chunkReduceSyncArray,
-      sizeof(int) * TOKENS_NUM * REDUCTION_CHUNKS_PER_TOKEN, stream));
+  HIP_ERROR_CHECK(hipMemsetAsync(state->ffn1SyncArrayDevice, 0,
+                                 sizeof(int) * tokensNum * TOPK, stream));
+
   HIP_ERROR_CHECK(hipMemsetAsync(
-      chunkReduceSyncArray, 0,
-      sizeof(int) * TOKENS_NUM * REDUCTION_CHUNKS_PER_TOKEN, stream));
-  HIP_ERROR_CHECK(hipMemcpyToSymbolAsync(HIP_SYMBOL(globalChunkReduceSyncArray),
-                                         &chunkReduceSyncArray, sizeof(int*), 0,
-                                         hipMemcpyHostToDevice, stream));
-
-  HIP_ERROR_CHECK(hipMemcpyToSymbolAsync(HIP_SYMBOL(globalTaskManager),
-                                         &managerHost, sizeof(TaskManagerType),
-                                         0, hipMemcpyHostToDevice, stream));
+      state->chunkReduceSyncArrayDevice, 0,
+      sizeof(int) * tokensNum * REDUCTION_CHUNKS_PER_TOKEN, stream));
 
   refHipFullMoeKernel<TGateGemmTileParams, TExpertFFN1TileParams,
                       TExpertFFN2TileParams><<<grid, block, 0, 0>>>(
-      tokens, gateWeights, ffn1ExpertWeights, ffn2ExpertWeights, ffn1Output,
-      ffn2Output, finalOutput, tokensNum);
-
-  HIP_ERROR_CHECK(managerHost.Deinit(stream));
-  HIP_ERROR_CHECK(hipFreeAsync(ffn1SyncArray, stream));
-  HIP_ERROR_CHECK(hipFreeAsync(chunkReduceSyncArray, stream));
+      tokens, gateWeights, ffn1ExpertWeights, ffn2ExpertWeights,
+      state->ffn1Output_device, state->ffn2Output_device, output, tokensNum);
 
   return hipSuccess;
 }
 
-struct InternalState {
-  TaskManagerType taskManager;
-};
-
 ////////////////////////////////////////////////////////////////
-hipError_t MoeKernelLauncher::Init(hipStream_t stream) {
+hipError_t MoeKernelLauncher::Init(hipStream_t stream, int maxTokens) {
   m_internalState = new InternalState();
-  HIP_ERROR_CHECK(m_internalState->taskManager.Init(stream));
+
+  const int ffn1OutputSize = maxTokens * TOPK * EXPERT_INTERMEDIATE_SIZE;
+  const int ffn2OutputSize = maxTokens * TOPK * HIDDEN_SIZE;
+
+  HIP_ERROR_CHECK(m_internalState->taskManagerHost.Init(stream));
+  HIP_ERROR_CHECK(hipMemcpyToSymbolAsync(
+      HIP_SYMBOL(globalTaskManager), &m_internalState->taskManagerHost,
+      sizeof(TaskManagerType), 0, hipMemcpyHostToDevice, stream));
+
+  HIP_ERROR_CHECK(hipMallocAsync(&m_internalState->ffn1SyncArrayDevice,
+                                 sizeof(int) * maxTokens * TOPK, stream));
+  HIP_ERROR_CHECK(hipMemcpyToSymbolAsync(
+      HIP_SYMBOL(globalFFN1SyncArray), &m_internalState->ffn1SyncArrayDevice,
+      sizeof(int*), 0, hipMemcpyHostToDevice, stream));
+
+  HIP_ERROR_CHECK(hipMallocAsync(
+      &m_internalState->chunkReduceSyncArrayDevice,
+      sizeof(int) * maxTokens * REDUCTION_CHUNKS_PER_TOKEN, stream));
+  HIP_ERROR_CHECK(
+      hipMemcpyToSymbolAsync(HIP_SYMBOL(globalChunkReduceSyncArray),
+                             &m_internalState->chunkReduceSyncArrayDevice,
+                             sizeof(int*), 0, hipMemcpyHostToDevice, stream));
+
+  HIP_ERROR_CHECK(hipMalloc(&m_internalState->ffn1Output_device,
+                            ffn1OutputSize * sizeof(float)));
+  HIP_ERROR_CHECK(hipMalloc(&m_internalState->ffn2Output_device,
+                            ffn2OutputSize * sizeof(float)));
+
+  HIP_ERROR_CHECK(hipStreamSynchronize(stream));
+
   return hipSuccess;
 }
 
 ////////////////////////////////////////////////////////////////
 hipError_t MoeKernelLauncher::Deinit(hipStream_t stream) {
-  HIP_ERROR_CHECK(m_internalState->taskManager.Deinit(stream));
+  HIP_ERROR_CHECK(hipFree(m_internalState->ffn1Output_device));
+  HIP_ERROR_CHECK(hipFree(m_internalState->ffn2Output_device));
+
+  HIP_ERROR_CHECK(hipFreeAsync(m_internalState->ffn1SyncArrayDevice, stream));
+  HIP_ERROR_CHECK(
+      hipFreeAsync(m_internalState->chunkReduceSyncArrayDevice, stream));
+  HIP_ERROR_CHECK(m_internalState->taskManagerHost.Deinit(stream));
+
+  HIP_ERROR_CHECK(hipStreamSynchronize(stream));
+
+  delete m_internalState;
   return hipSuccess;
 }
 
@@ -358,6 +371,9 @@ hipError_t MoeKernelLauncher::Launch(const float* tokens,
                                      const float* ffn2ExpertWeights,
                                      float* output, int tokensNum,
                                      hipStream_t stream) {
+  HIP_ERROR_CHECK(refHipFullMoe(m_internalState, tokens, gateWeights,
+                                ffn1ExpertWeights, ffn2ExpertWeights, output,
+                                tokensNum, stream));
   return hipSuccess;
 }
 

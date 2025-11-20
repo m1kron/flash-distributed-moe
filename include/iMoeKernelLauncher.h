@@ -20,7 +20,9 @@ class IMoeKernelLauncher {
 }  // namespace moe
 
 // Creates launcher.
-extern "C" hipError_t CreateLauncher(moe::IMoeKernelLauncher** launcher, hipStream_t stream);
+extern "C" hipError_t CreateLauncher(moe::IMoeKernelLauncher** launcher,
+                                     hipStream_t stream, int maxTokens);
 
 // Destroys launcher.
-extern "C" hipError_t DestroyLauncher(moe::IMoeKernelLauncher* launcher, hipStream_t stream);
+extern "C" hipError_t DestroyLauncher(moe::IMoeKernelLauncher* launcher,
+                                      hipStream_t stream);
