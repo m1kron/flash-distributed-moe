@@ -56,8 +56,8 @@ hipError_t refHipGemm(const float* A, const float* B, float* topkVals,
   assert(M == M_SIZE);
   assert(N == N_SIZE);
 
-  using TGemmTileParams =
-      GemmTileParams<N_SIZE, K_SIZE, m_tile_size, n_tile_size, 32, THREADS>;
+  using TGemmTileParams = GemmTileParams<N_SIZE, K_SIZE, m_tile_size,
+                                         n_tile_size, 32, THREADS, float>;
 
   dim3 grid(BLOCKS);
   dim3 block(TGemmTileParams::THREADS);

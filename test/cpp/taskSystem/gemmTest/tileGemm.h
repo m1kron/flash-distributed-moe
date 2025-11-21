@@ -7,7 +7,8 @@ constexpr int THREADS = 128;
 
 template <int N>
 struct TestTileGemm {
-  using TGemmTileParams = GemmTileParams<N, 2048, TILE_M, TILE_N, 32, THREADS>;
+  using TGemmTileParams =
+      GemmTileParams<N, 2048, TILE_M, TILE_N, 32, THREADS, float>;
 
   static constexpr int SHARED_MEM_NEEDES_BYTES =
       TGemmTileParams::SHARED_MEM_NEEDES_BYTES;

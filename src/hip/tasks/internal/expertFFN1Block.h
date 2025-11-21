@@ -36,7 +36,8 @@ __device__ void expertFFN1_block(
   using T_FFN1_TILE =
       GemmTileParams<T_OUTPUT_TILE::N * 2, T_OUTPUT_TILE::K,
                      T_OUTPUT_TILE::TILE_M, T_OUTPUT_TILE::TILE_N,
-                     T_OUTPUT_TILE::TILE_K, T_OUTPUT_TILE::THREADS>;
+                     T_OUTPUT_TILE::TILE_K, T_OUTPUT_TILE::THREADS,
+                     typename T_OUTPUT_TILE::TType>;
 
   static_assert(T_FFN1_TILE::THREAD_OUTPUT_SIZE ==
                 T_OUTPUT_TILE::THREAD_OUTPUT_SIZE);

@@ -24,21 +24,21 @@ constexpr int BLOCKS = 304;
 
 // Gate => tokens[TOKENS_NUM,HIDDEN_SIZE] * gate[HIDDEN_SIZE,EXPERTS_NUM] =>
 // routing[TOKENS_NUM,EXPERTS_NUM]
-using TGateGemmTileParams =
-    GemmTileParams<EXPERTS_NUM, HIDDEN_SIZE, 1, EXPERTS_NUM, 32, THREADS>;
+using TGateGemmTileParams = GemmTileParams<EXPERTS_NUM, HIDDEN_SIZE, 1,
+                                           EXPERTS_NUM, 32, THREADS, float>;
 
 constexpr int EXPERT_TILE_SIZE = 256;
 // Expert => token[1,HIDDEN_SIZE] *
 // expertW[HIDDEN_SIZE,EXPERT_INTERMEDIATE_SIZE] => [1,EXPERT_INTERMEDIATE_SIZE]
 using TExpertFFN1TileParams =
     GemmTileParams<EXPERT_INTERMEDIATE_SIZE, HIDDEN_SIZE, 1, EXPERT_TILE_SIZE,
-                   32, THREADS>;
+                   32, THREADS, float>;
 
 // Expert => token[1,EXPERT_INTERMEDIATE_SIZE] *
 // expertW[EXPERT_INTERMEDIATE_SIZE,HIDDEN_SIZE] => [1,HIDDEN_SIZE]
 using TExpertFFN2TileParams =
     GemmTileParams<HIDDEN_SIZE, EXPERT_INTERMEDIATE_SIZE, 1, EXPERT_TILE_SIZE,
-                   32, THREADS>;
+                   32, THREADS, float>;
 
 struct __align__(16) ExpertTileTask {
   const float* ffn1ExpertWeights;

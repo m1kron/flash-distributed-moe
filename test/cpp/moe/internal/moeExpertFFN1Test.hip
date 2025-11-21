@@ -18,7 +18,7 @@ constexpr int BLOCKS = 304;
 constexpr int EXPERT_TILE_SIZE = 256;
 using TExpertGemmTileParams =
     GemmTileParams<EXPERT_INTERMEDIATE_SIZE, HIDDEN_SIZE, 1, EXPERT_TILE_SIZE,
-                   32, THREADS>;
+                   32, THREADS, float>;
 
 __global__ void hipExpertFFN1Kernel(const float* __restrict__ tokens,
                                     const float* __restrict__ expertWeights,

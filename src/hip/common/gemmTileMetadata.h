@@ -1,9 +1,10 @@
 #pragma once
 
 // gemm tile metadata.
-template <int _N, int _K, int _TILE_M, int _TILE_N, int _TILE_K, int _THREADS>
+template <int _N, int _K, int _TILE_M, int _TILE_N, int _TILE_K, int _THREADS,
+          typename _TType>
 struct GemmTileParams {
-  using TType = float;
+  using TType = _TType;
   constexpr static int N = _N;
   constexpr static int K = _K;
   constexpr static int TILE_M = _TILE_M;
