@@ -3,6 +3,10 @@
 #include "src/hip/kernel/moeKernel.h"
 
 namespace moe {
+
+extern __constant__ TaskManagerType globalTaskManager;
+extern __constant__ int* globalFFN1SyncArray;
+extern __constant__ int* globalChunkReduceSyncArray;
 struct InternalState {
   TaskManagerType taskManagerHost;
   int* ffn1SyncArrayDevice;
