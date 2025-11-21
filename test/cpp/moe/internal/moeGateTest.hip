@@ -22,7 +22,7 @@ __global__ void refHipKernel(const float* __restrict__ A,
   __shared__ char sharedMemPool[TGEMM_TILE::SHARED_MEM_NEEDES_BYTES];
 
   for (int tokenIdx = blockIdx.x; tokenIdx < M_SIZE; tokenIdx += gridDim.x) {
-    typename TGEMM_TILE::TOutputType out_regs[TGEMM_TILE::THREAD_OUTPUT_SIZE];
+    typename TGEMM_TILE::TType out_regs[TGEMM_TILE::THREAD_OUTPUT_SIZE];
 
     moe::tasks::internal::GemmTile_block<TGEMM_TILE>(A, B, out_regs, tokenIdx,
                                                      0, sharedMemPool);
@@ -56,8 +56,8 @@ hipError_t refHipGemm(const float* A, const float* B, float* topkVals,
   assert(M == M_SIZE);
   assert(N == N_SIZE);
 
-  using TGemmTileParams =
-      GemmTileParams<N_SIZE, K_SIZE, m_tile_size, n_tile_size, 32, THREADS>;
+  using TGemmTileParams = GemmTileParams<N_SIZE, K_SIZE, m_tile_size,
+                                         n_tile_size, 32, THREADS, float>;
 
   dim3 grid(BLOCKS);
   dim3 block(TGemmTileParams::THREADS);

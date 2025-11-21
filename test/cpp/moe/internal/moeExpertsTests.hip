@@ -24,21 +24,21 @@ constexpr int BLOCKS = 304;
 
 // Gate => tokens[TOKENS_NUM,HIDDEN_SIZE] * gate[HIDDEN_SIZE,EXPERTS_NUM] =>
 // routing[TOKENS_NUM,EXPERTS_NUM]
-using TGateGemmTileParams =
-    GemmTileParams<EXPERTS_NUM, HIDDEN_SIZE, 1, EXPERTS_NUM, 32, THREADS>;
+using TGateGemmTileParams = GemmTileParams<EXPERTS_NUM, HIDDEN_SIZE, 1,
+                                           EXPERTS_NUM, 32, THREADS, float>;
 
 constexpr int EXPERT_TILE_SIZE = 256;
 // Expert => token[1,HIDDEN_SIZE] *
 // expertW[HIDDEN_SIZE,EXPERT_INTERMEDIATE_SIZE] => [1,EXPERT_INTERMEDIATE_SIZE]
 using TExpertFFN1TileParams =
     GemmTileParams<EXPERT_INTERMEDIATE_SIZE, HIDDEN_SIZE, 1, EXPERT_TILE_SIZE,
-                   32, THREADS>;
+                   32, THREADS, float>;
 
 // Expert => token[1,EXPERT_INTERMEDIATE_SIZE] *
 // expertW[EXPERT_INTERMEDIATE_SIZE,HIDDEN_SIZE] => [1,HIDDEN_SIZE]
 using TExpertFFN2TileParams =
     GemmTileParams<HIDDEN_SIZE, EXPERT_INTERMEDIATE_SIZE, 1, EXPERT_TILE_SIZE,
-                   32, THREADS>;
+                   32, THREADS, float>;
 
 struct __align__(16) ExpertTileTask {
   const float* ffn1ExpertWeights;
@@ -73,7 +73,7 @@ __device__ void ExecuteExpertFFN1Task(const ExpertTileTask& task,
   const float* thisffn1ExpertWeights =
       task.ffn1ExpertWeights + task.expertIdx * T_FFN1_TILE::K * T_FFN1_TILE::N;
 
-  typename T_FFN1_TILE::TOutputType outRegs[T_FFN1_TILE::THREAD_OUTPUT_SIZE];
+  typename T_FFN1_TILE::TType outRegs[T_FFN1_TILE::THREAD_OUTPUT_SIZE];
 
   moe::tasks::internal::expertFFN1_block<T_FFN1_TILE>(
       thisBlockTokens, thisffn1ExpertWeights, outRegs, 0,
@@ -126,7 +126,7 @@ __device__ void ExecuteExpertFFN2Task(const ExpertTileTask& task,
   const float* thisffn2ExpertWeights =
       task.ffn2ExpertWeights + task.expertIdx * T_FFN2_TILE::K * T_FFN2_TILE::N;
 
-  typename T_FFN2_TILE::TOutputType outRegs[T_FFN2_TILE::THREAD_OUTPUT_SIZE];
+  typename T_FFN2_TILE::TType outRegs[T_FFN2_TILE::THREAD_OUTPUT_SIZE];
 
   moe::tasks::internal::GemmTile_block<T_FFN2_TILE>(
       thisBlockInput, thisffn2ExpertWeights, outRegs, 0,
@@ -187,7 +187,7 @@ __global__ void refHipGatefRoutingExpertsKernel(
 
   for (int tokenIdx = blockIdx.x; tokenIdx < TOKENS_NUM;
        tokenIdx += gridDim.x) {
-    typename T_GATE_TILE::TOutputType out_regs[T_GATE_TILE::THREAD_OUTPUT_SIZE];
+    typename T_GATE_TILE::TType out_regs[T_GATE_TILE::THREAD_OUTPUT_SIZE];
 
     moe::tasks::internal::GemmTile_block<T_GATE_TILE>(
         tokens, gateWeights, out_regs, tokenIdx, 0, sharedMemPool);

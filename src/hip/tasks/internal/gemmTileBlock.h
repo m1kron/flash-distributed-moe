@@ -10,12 +10,12 @@ namespace internal {
 // A: M x K (row-major), B: K x N (row-major), C: M x N (row-major).
 template <typename GEMM_TILE_PARAMS>
 __device__ void GemmTile_block(
-    const typename GEMM_TILE_PARAMS::TInputType* __restrict__ A,
-    const typename GEMM_TILE_PARAMS::TInputType* __restrict__ B,
-    typename GEMM_TILE_PARAMS::TOutputType* __restrict__ CTile_thread_regs,
+    const typename GEMM_TILE_PARAMS::TType* __restrict__ A,
+    const typename GEMM_TILE_PARAMS::TType* __restrict__ B,
+    typename GEMM_TILE_PARAMS::TType* __restrict__ CTile_thread_regs,
     int blockTileRowStartIdx, int blockTileColStartIdx,
     void* __restrict__ sharedMemPool) {
-  using TType = typename GEMM_TILE_PARAMS::TInputType;
+  using TType = typename GEMM_TILE_PARAMS::TType;
   constexpr int TILE_M = GEMM_TILE_PARAMS::TILE_M;
   constexpr int TILE_N = GEMM_TILE_PARAMS::TILE_N;
   constexpr int K = GEMM_TILE_PARAMS::K;
@@ -79,9 +79,8 @@ __device__ void GemmTile_block(
 // global mem.
 template <typename GEMM_TILE_PARAMS>
 __device__ void WriteGemmTileToGlobalMem_block(
-    const typename GEMM_TILE_PARAMS::
-        TOutputType* __restrict__ outTile_thread_regs,
-    typename GEMM_TILE_PARAMS::TOutputType* __restrict__ out_global,
+    const typename GEMM_TILE_PARAMS::TType* __restrict__ outTile_thread_regs,
+    typename GEMM_TILE_PARAMS::TType* __restrict__ out_global,
     int blockTileRowStartIdx, int blockTileColStartIdx) {
   constexpr int OUT_PER_THREAD = GEMM_TILE_PARAMS::THREAD_OUTPUT_SIZE;
   constexpr int TILE_M = GEMM_TILE_PARAMS::TILE_M;

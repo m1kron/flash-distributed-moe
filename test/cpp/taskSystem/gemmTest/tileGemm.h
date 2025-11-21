@@ -7,7 +7,8 @@ constexpr int THREADS = 128;
 
 template <int N>
 struct TestTileGemm {
-  using TGemmTileParams = GemmTileParams<N, 2048, TILE_M, TILE_N, 32, THREADS>;
+  using TGemmTileParams =
+      GemmTileParams<N, 2048, TILE_M, TILE_N, 32, THREADS, float>;
 
   static constexpr int SHARED_MEM_NEEDES_BYTES =
       TGemmTileParams::SHARED_MEM_NEEDES_BYTES;
@@ -16,7 +17,7 @@ struct TestTileGemm {
       const float* __restrict__ A, const float* __restrict__ B,
       float* __restrict__ C, int blockTileRowStartIdx, int blockTileColStartIdx,
       void* sharedMemPool) {
-    typename TGemmTileParams::TOutputType
+    typename TGemmTileParams::TType
         out_regs[TGemmTileParams::THREAD_OUTPUT_SIZE];
 
     moe::tasks::internal::GemmTile_block<TGemmTileParams>(
