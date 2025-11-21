@@ -13,6 +13,7 @@
 #include "test/cpp/utils/utils.h"
 
 namespace {
+constexpr float ERROR_ABS = 1e-5f;
 constexpr int TOKENS_NUM = 48;
 constexpr int EXPERTS_NUM = 128;
 constexpr int HIDDEN_SIZE = 2048;
@@ -492,8 +493,6 @@ TEST(MoeTasksInternalTests, MoeExperts_basicTest) {
 
   // printResult(output_host.data());
 
-  ASSERT_EQ(output_host.size(), refOut.size());
-  CheckAgainstRefBuffer(output_host.data(), refOut.data(), refOut.size(),
-                        1e-4f);
+  CheckAgainstRefBuffer(output_host, refOut, ERROR_ABS);
 }
 }  // namespace

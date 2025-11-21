@@ -110,7 +110,7 @@ void runInplaceSaxpy(hipStream_t stream, int32_t* dataGpu, size_t dataSize) {
   HIP_ERROR_ASSERT(managerHost.Deinit(stream));
 }
 
-TEST(TaskSystemUnittests, SaxpyCoherenceTest) {
+TEST(TaskSystemTests, SaxpyCoherenceTest) {
   // Prepare data:
   const size_t dataSize = 2048 * THREAD_BLOCK_SIZE;
   std::vector<int32_t> dataCpu(dataSize);
