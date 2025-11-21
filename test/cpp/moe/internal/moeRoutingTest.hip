@@ -1,11 +1,11 @@
 #include <hip/hip_runtime.h>
 
 #include "src/hip/hipHostCommon.h"
+#include "src/hip/kernel/tasks/internal/gemmTileBlock.h"
+#include "src/hip/kernel/tasks/internal/softmaxBlock.h"
+#include "src/hip/kernel/tasks/internal/topkBlock.h"
 #include "src/hip/taskSystem/taskManager.h"
 #include "src/hip/taskSystem/workerLoop.h"
-#include "src/hip/tasks/internal/gemmTileBlock.h"
-#include "src/hip/tasks/internal/softmaxBlock.h"
-#include "src/hip/tasks/internal/topkBlock.h"
 #include "src/hip/utils/hipDeviceUtils.h"
 #include "test/cpp/moe/reference/refMoeGate.h"
 #include "test/cpp/utils/utils.h"
