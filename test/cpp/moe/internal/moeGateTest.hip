@@ -1,8 +1,6 @@
 #include <hip/hip_runtime.h>
 
-#include "src/hip/kernel/tasks/internal/gemmTileBlock.h"
-#include "src/hip/kernel/tasks/internal/softmaxBlock.h"
-#include "src/hip/kernel/tasks/internal/topkBlock.h"
+#include "src/hip/kernel/tasks/internal/gateBlock.h"
 #include "test/cpp/moe/reference/refMoeGate.h"
 #include "test/cpp/utils/utils.h"
 
@@ -15,35 +13,25 @@ constexpr int THREADS = 128;
 constexpr int BLOCKS = 304;
 
 template <typename TGEMM_TILE>
-__global__ void refHipKernel(const float* __restrict__ A,
-                             const float* __restrict__ B,
+__global__ void refHipKernel(const float* __restrict__ tokens,
+                             const float* __restrict__ gateWeights,
                              float* __restrict__ topkVals,
                              int* __restrict__ topIdx, int M_SIZE) {
   __shared__ char sharedMemPool[TGEMM_TILE::SHARED_MEM_NEEDES_BYTES];
 
   for (int tokenIdx = blockIdx.x; tokenIdx < M_SIZE; tokenIdx += gridDim.x) {
-    typename TGEMM_TILE::TType out_regs[TGEMM_TILE::THREAD_OUTPUT_SIZE];
+    float* topkVals_shared = nullptr;
+    int* topkIdx_shared = nullptr;
 
-    moe::tasks::internal::GemmTile_block<TGEMM_TILE>(A, B, out_regs, tokenIdx,
-                                                     0, sharedMemPool);
-    out_regs[0] =
-        moe::tasks::internal::Softmax_block<TGEMM_TILE::THREADS, float>(
-            out_regs[0], sharedMemPool);
-
-    char* sharedMemPoolBytes = reinterpret_cast<char*>(sharedMemPool);
-    float* s_topkVals = reinterpret_cast<float*>(sharedMemPoolBytes);
-    int* s_topkIdx =
-        reinterpret_cast<int*>(sharedMemPoolBytes + sizeof(float) * TOPK);
-    int* nextPool = s_topkIdx + TOPK;
-
-    moe::tasks::internal::Topk8_block<TGEMM_TILE::THREADS, float>(
-        out_regs[0], s_topkVals, s_topkIdx, nextPool);
+    moe::tasks::internal::gate_block<TGEMM_TILE, TOPK>(
+        tokens, gateWeights, tokenIdx, &topkVals_shared, &topkIdx_shared,
+        sharedMemPool);
 
     // Write to output:
     const int tid = threadIdx.x;
     if (threadIdx.x < TOPK) {
-      topkVals[tokenIdx * 8 + tid] = s_topkVals[tid];
-      topIdx[tokenIdx * 8 + tid] = s_topkIdx[tid];
+      topkVals[tokenIdx * 8 + tid] = topkVals_shared[tid];
+      topIdx[tokenIdx * 8 + tid] = topkIdx_shared[tid];
     }
   }
 }
