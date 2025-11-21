@@ -3,7 +3,7 @@
 #include "src/hip/hipHostCommon.h"
 #include "src/hip/taskSystem/taskManager.h"
 #include "src/hip/taskSystem/workerLoop.h"
-#include "src/hip/tasks/internal/expertFFN1.h"
+#include "src/hip/tasks/internal/expertFFN1Block.h"
 #include "src/hip/tasks/internal/gemmTileBlock.h"
 #include "src/hip/tasks/internal/reduceBlock.h"
 #include "src/hip/tasks/internal/softmaxBlock.h"
@@ -50,9 +50,9 @@ __device__ void ExecuteExpertFFN1Task(const MoeTaskDesc& task,
 
   typename T_FFN1_TILE::TOutputType outRegs[T_FFN1_TILE::THREAD_OUTPUT_SIZE];
 
-  tasks::expertFFN1Task<T_FFN1_TILE>(thisBlockTokens, thisffn1ExpertWeights,
-                                     outRegs, 0, task.blockTileColStartIdx,
-                                     sharedMemPool);
+  tasks::internal::expertFFN1_block<T_FFN1_TILE>(
+      thisBlockTokens, thisffn1ExpertWeights, outRegs, 0,
+      task.blockTileColStartIdx, sharedMemPool);
 
   float* thisBlockOutput =
       task.ffn1Output +
@@ -164,10 +164,11 @@ __device__ void ExecuteFinalReductionTask(const MoeTaskDesc& task,
       task.finalOutput +
       task.tokenIdx * MOE_METADATA::MOE_PROBLEM_CONFIG::HIDDEN_SIZE;
 
-  tasks::Reduce_block<MOE_METADATA::MOE_PROBLEM_CONFIG::TOPK,
-                      MOE_METADATA::TILES_CONFIG::REDUCTION_TILE_SIZE,
-                      MOE_METADATA::TILES_CONFIG::GATE_TILE_METADATA::THREADS,
-                      MOE_METADATA::MOE_PROBLEM_CONFIG::HIDDEN_SIZE>(
+  tasks::internal::Reduce_block<
+      MOE_METADATA::MOE_PROBLEM_CONFIG::TOPK,
+      MOE_METADATA::TILES_CONFIG::REDUCTION_TILE_SIZE,
+      MOE_METADATA::TILES_CONFIG::GATE_TILE_METADATA::THREADS,
+      MOE_METADATA::MOE_PROBLEM_CONFIG::HIDDEN_SIZE>(
       thisBlockInput, thisBlockOutput, task.blockTileColStartIdx);
 }
 

@@ -1,16 +1,16 @@
 #include <hip/hip_runtime.h>
 
-#include "../../../src/hip/hipHostCommon.h"
-#include "../../../src/hip/taskSystem/taskManager.h"
-#include "../../../src/hip/taskSystem/workerLoop.h"
-#include "../../../src/hip/tasks/internal/expertFFN1.h"
-#include "../../../src/hip/tasks/internal/gemmTileBlock.h"
-#include "../../../src/hip/tasks/internal/softmaxBlock.h"
-#include "../../../src/hip/tasks/internal/topkBlock.h"
-#include "../../../src/hip/utils/hipDeviceUtils.h"
-#include "../reference/refExpertFFN1.h"
-#include "../reference/refMoeGate.h"
-#include "../utils/utils.h"
+#include "src/hip/hipHostCommon.h"
+#include "src/hip/taskSystem/taskManager.h"
+#include "src/hip/taskSystem/workerLoop.h"
+#include "src/hip/tasks/internal/expertFFN1Block.h"
+#include "src/hip/tasks/internal/gemmTileBlock.h"
+#include "src/hip/tasks/internal/softmaxBlock.h"
+#include "src/hip/tasks/internal/topkBlock.h"
+#include "src/hip/utils/hipDeviceUtils.h"
+#include "test/cpp/reference/refExpertFFN1.h"
+#include "test/cpp/reference/refMoeGate.h"
+#include "test/cpp/utils/utils.h"
 
 namespace {
 constexpr int TOKENS_NUM = 48;
@@ -74,9 +74,9 @@ __device__ void ExecuteExpertFFN1Task(const ExpertTileTask& task,
 
   typename T_FFN1_TILE::TOutputType outRegs[T_FFN1_TILE::THREAD_OUTPUT_SIZE];
 
-  tasks::expertFFN1Task<T_FFN1_TILE>(thisBlockTokens, thisffn1ExpertWeights,
-                                     outRegs, 0, task.blockTileColStartIdx,
-                                     sharedMemPool);
+  moe::tasks::internal::expertFFN1_block<T_FFN1_TILE>(
+      thisBlockTokens, thisffn1ExpertWeights, outRegs, 0,
+      task.blockTileColStartIdx, sharedMemPool);
 
   float* thisBlockOutput = task.ffn1Output +
                            task.tokenIdx * TOPK * T_FFN1_TILE::N +

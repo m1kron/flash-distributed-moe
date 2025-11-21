@@ -1,8 +1,9 @@
 #pragma once
 #include "gemmTileBlock.h"
 
+namespace moe {
 namespace tasks {
-
+namespace internal {
 inline __device__ float silu(float a, float b) {
   float sig;
   if (a >= 0.0f) {
@@ -16,13 +17,13 @@ inline __device__ float silu(float a, float b) {
   return silu * b;
 }
 
-// Task for expert's FFN1. rowIdx and colIdx refers to output tiles.
+// Task impl for expert's FFN1. rowIdx and colIdx refers to output tiles.
 // Assumption is that output's N dimension equal to 2 * (expertWeights N
 // dimension).
 // Output is returned in register array of size
 // T_OUTPUT_TILE::THREAD_OUTPUT_SIZE;
 template <typename T_OUTPUT_TILE>
-__device__ void expertFFN1Task(
+__device__ void expertFFN1_block(
     const typename T_OUTPUT_TILE::TInputType* __restrict__ tokens,
     const typename T_OUTPUT_TILE::TInputType* __restrict__ expertWeights,
     typename T_OUTPUT_TILE::TOutputType* __restrict__ outRegs, int rowIdx,
@@ -53,5 +54,6 @@ __device__ void expertFFN1Task(
     outRegs[i] = silu(w1_regs[i], outRegs[i]);
   }
 }
-
+}  // namespace internal
 }  // namespace tasks
+}  // namespace moe

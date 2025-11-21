@@ -1,10 +1,10 @@
 #include <hip/hip_runtime.h>
 
-#include "../../../src/hip/tasks/internal/gemmTileBlock.h"
-#include "../../../src/hip/tasks/internal/softmaxBlock.h"
-#include "../../../src/hip/tasks/internal/topkBlock.h"
-#include "../reference/refMoeGate.h"
-#include "../utils/utils.h"
+#include "src/hip/tasks/internal/gemmTileBlock.h"
+#include "src/hip/tasks/internal/softmaxBlock.h"
+#include "src/hip/tasks/internal/topkBlock.h"
+#include "test/cpp/reference/refMoeGate.h"
+#include "test/cpp/utils/utils.h"
 
 namespace {
 constexpr int M_SIZE = 48;

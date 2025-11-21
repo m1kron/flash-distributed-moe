@@ -1,10 +1,10 @@
 #include <hip/hip_runtime.h>
 
-#include "../../../src/hip/hipHostCommon.h"
-#include "../../../src/hip/tasks/internal/expertFFN1.h"
-#include "../../../src/hip/utils/hipDeviceUtils.h"
-#include "../reference/refExpertFFN1.h"
-#include "../utils/utils.h"
+#include "src/hip/hipHostCommon.h"
+#include "src/hip/tasks/internal/expertFFN1Block.h"
+#include "src/hip/utils/hipDeviceUtils.h"
+#include "test/cpp/reference/refExpertFFN1.h"
+#include "test/cpp/utils/utils.h"
 
 namespace {
 constexpr int TOKENS_NUM = 48;
@@ -33,7 +33,7 @@ __global__ void hipExpertFFN1Kernel(const float* __restrict__ tokens,
 
   typename TExpertGemmTileParams::TOutputType
       outRegs[TExpertGemmTileParams::THREAD_OUTPUT_SIZE];
-  tasks::expertFFN1Task<TExpertGemmTileParams>(
+  moe::tasks::internal::expertFFN1_block<TExpertGemmTileParams>(
       tokens, expertWeights, outRegs, tokenIdx, tileCol, sharedMemPool);
   WriteGemmTileToGlobalMem_block<TExpertGemmTileParams>(outRegs, output,
                                                         tokenIdx, tileCol);
