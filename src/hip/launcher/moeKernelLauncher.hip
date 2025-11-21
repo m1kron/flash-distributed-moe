@@ -11,7 +11,7 @@
 #include "src/hip/utils/hipDeviceUtils.h"
 
 namespace moe {
-struct __align__(16) ExpertTileTask {
+struct __align__(16) MoeTaskDesc {
   const float* __restrict__ ffn1ExpertWeights;
   const float* __restrict__ ffn2ExpertWeights;
   const float* __restrict__ tokens;
@@ -26,14 +26,14 @@ struct __align__(16) ExpertTileTask {
   int taskType;
 };
 
-using TaskManagerType = TaskManager<ExpertTileTask, 8192>;
+using TaskManagerType = TaskManager<MoeTaskDesc, 8192>;
 
 static __constant__ TaskManagerType globalTaskManager;
 static __constant__ int* globalFFN1SyncArray;
 static __constant__ int* globalChunkReduceSyncArray;
 
 template <typename MOE_METADATA>
-__device__ void ExecuteExpertFFN1Task(const ExpertTileTask& task,
+__device__ void ExecuteExpertFFN1Task(const MoeTaskDesc& task,
                                       void* sharedMemPool) {
   using T_FFN1_TILE = typename MOE_METADATA::TILES_CONFIG::FFN1_TILE_METADATA;
   if (threadIdx.x == 65) {
@@ -77,7 +77,7 @@ __device__ void ExecuteExpertFFN1Task(const ExpertTileTask& task,
   __syncthreads();
   if (*lastBlock) {
     // Add tasks for ffn2:
-    ExpertTileTask ffn2Task = task;
+    MoeTaskDesc ffn2Task = task;
     ffn2Task.taskType = 1;
 
     constexpr int FFN2_CHUNKS = T_FFN1_TILE::K / T_FFN1_TILE::TILE_N;
@@ -89,7 +89,7 @@ __device__ void ExecuteExpertFFN1Task(const ExpertTileTask& task,
 }
 
 template <typename MOE_METADATA>
-__device__ void ExecuteExpertFFN2Task(const ExpertTileTask& task,
+__device__ void ExecuteExpertFFN2Task(const MoeTaskDesc& task,
                                       void* sharedMemPool) {
   using T_FFN2_TILE = typename MOE_METADATA::TILES_CONFIG::FFN2_TILE_METADATA;
 
@@ -145,7 +145,7 @@ __device__ void ExecuteExpertFFN2Task(const ExpertTileTask& task,
   __syncthreads();
   if (*lastBlock) {
     // Add tasks for reduction:
-    ExpertTileTask reductionTask = task;
+    MoeTaskDesc reductionTask = task;
     reductionTask.taskType = 2;
     reductionTask.blockTileColStartIdx =
         task.blockTileColStartIdx / FFN2_DEP_SIZE;
@@ -154,7 +154,7 @@ __device__ void ExecuteExpertFFN2Task(const ExpertTileTask& task,
 }
 
 template <typename MOE_METADATA>
-__device__ void ExecuteFinalReductionTask(const ExpertTileTask& task,
+__device__ void ExecuteFinalReductionTask(const MoeTaskDesc& task,
                                           void* sharedMemPool) {
   const float* thisBlockInput =
       task.ffn2Output + task.tokenIdx * MOE_METADATA::MOE_PROBLEM_CONFIG::TOPK *
@@ -172,7 +172,7 @@ __device__ void ExecuteFinalReductionTask(const ExpertTileTask& task,
 }
 
 template <typename MOE_METADATA>
-__device__ void ExecuteGeneralTask(const ExpertTileTask& task,
+__device__ void ExecuteGeneralTask(const MoeTaskDesc& task,
                                    void* sharedMemPool) {
   switch (task.taskType) {
     case 0: {
@@ -246,7 +246,7 @@ __global__ void moeKernel(const typename MOE_METADATA::MOE_PROBLEM_CONFIG::
 
     // Warp 0 pushes all the tasks...
     for (int i = 0; i < MOE_METADATA::MOE_PROBLEM_CONFIG::TOPK; ++i) {
-      ExpertTileTask rTask;
+      MoeTaskDesc rTask;
       rTask.ffn1ExpertWeights = ffn1ExpertWeights;
       rTask.ffn2ExpertWeights = ffn2ExpertWeights;
       rTask.tokens = tokens;
@@ -256,19 +256,17 @@ __global__ void moeKernel(const typename MOE_METADATA::MOE_PROBLEM_CONFIG::
       rTask.tokenIdx = tokenIdx;
       rTask.expertIdx = s_topkIdx[i];
       rTask.expertWeight = s_topkVals[i];
-      rTask.blockTileColStartIdx = 0;
       rTask.topkSlotIdx = i;
       rTask.taskType = 0;
 
-      globalTaskManager.PushTask_warp(&rTask);
-
-      rTask.blockTileColStartIdx = 1;
-
-      globalTaskManager.PushTask_warp(&rTask);
-
-      rTask.blockTileColStartIdx = 2;
-
-      globalTaskManager.PushTask_warp(&rTask);
+      constexpr int FFN1_CHUNKS =
+          MOE_METADATA::TILES_CONFIG::FFN1_TILE_METADATA::N /
+          MOE_METADATA::TILES_CONFIG::FFN1_TILE_METADATA::TILE_N;
+#pragma unroll
+      for (int i = 0; i < FFN1_CHUNKS; ++i) {
+        rTask.blockTileColStartIdx = i;
+        globalTaskManager.PushTask_warp(&rTask);
+      }
     }
   }
 
