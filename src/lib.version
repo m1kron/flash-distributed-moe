@@ -1,0 +1,4 @@
+LIBFLASHMOE_0.1 {
+  global: CreateLauncher; DestroyLauncher;
+  local: *;
+};
