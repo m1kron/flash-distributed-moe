@@ -1,9 +1,9 @@
 #include <hip/hip_runtime.h>
 
-#include "../../../../src/hip/hipHostCommon.h"
-#include "../../../../src/hip/taskSystem/taskManager.h"
-#include "../../../../src/hip/taskSystem/workerLoop.h"
-#include "../../../../src/hip/utils/hipDeviceUtils.h"
+#include "src/hip/hipHostCommon.h"
+#include "src/hip/taskSystem/taskManager.h"
+#include "src/hip/taskSystem/workerLoop.h"
+#include "src/hip/utils/hipDeviceUtils.h"
 #include "taskSystemGemmKernel.h"
 #include "tileGemm.h"
 

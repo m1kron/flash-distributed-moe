@@ -1,11 +1,8 @@
 #include <hip/hip_runtime.h>
 
-#include <vector>
-
-#include "../../utils/utils.h"
-#include "gtest/gtest.h"
 #include "staticGemmKernel.h"
 #include "taskSystemGemmKernel.h"
+#include "test/cpp/utils/utils.h"
 
 namespace {
 
@@ -68,9 +65,9 @@ void PerformGemmCorrectnessTest(const TFunc func) {
   CheckConstValBuffer(host_c, 2048.0f);
 }
 
-TEST(TaskSystemUnittests, TaskSystemGemm) {
+TEST(TaskSystemTests, TaskSystemGemm) {
   PerformGemmCorrectnessTest(taskSystemGemmFunc);
 }
 
-TEST(TaskSystemUnittests, RefGemm) { PerformGemmCorrectnessTest(staticGemm); }
+TEST(TaskSystemTests, RefGemm) { PerformGemmCorrectnessTest(staticGemm); }
 }  // namespace
