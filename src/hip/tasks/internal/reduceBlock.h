@@ -1,7 +1,5 @@
 #pragma once
 
-#include <hip/hip_runtime.h>
-
 namespace moe {
 namespace tasks {
 namespace internal {

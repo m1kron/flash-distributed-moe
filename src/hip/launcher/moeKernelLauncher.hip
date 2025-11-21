@@ -231,9 +231,9 @@ __global__ void moeKernel(const typename MOE_METADATA::MOE_PROBLEM_CONFIG::
 
     GemmTile_block<typename MOE_METADATA::TILES_CONFIG::GATE_TILE_METADATA>(
         tokens, gateWeights, out_regs, tokenIdx, 0, sharedMemPool);
-    out_regs[0] =
-        Softmax_block<MOE_METADATA::TILES_CONFIG::GATE_TILE_METADATA::THREADS,
-                      float>(out_regs[0], sharedMemPool);
+    out_regs[0] = moe::tasks::internal::Softmax_block<
+        MOE_METADATA::TILES_CONFIG::GATE_TILE_METADATA::THREADS, float>(
+        out_regs[0], sharedMemPool);
 
     char* sharedMemPoolBytes = reinterpret_cast<char*>(sharedMemPool);
     float* s_topkVals = reinterpret_cast<float*>(sharedMemPoolBytes);
@@ -242,7 +242,8 @@ __global__ void moeKernel(const typename MOE_METADATA::MOE_PROBLEM_CONFIG::
         sizeof(float) * MOE_METADATA::MOE_PROBLEM_CONFIG::TOPK);
     int* nextPool = s_topkIdx + MOE_METADATA::MOE_PROBLEM_CONFIG::TOPK;
 
-    Topk8_block<MOE_METADATA::TILES_CONFIG::GATE_TILE_METADATA::THREADS, float>(
+    moe::tasks::internal::Topk8_block<
+        MOE_METADATA::TILES_CONFIG::GATE_TILE_METADATA::THREADS, float>(
         out_regs[0], s_topkVals, s_topkIdx, nextPool);
 
     // Warp 0 pushes all the tasks...

@@ -99,7 +99,8 @@ __global__ void refRoutingKernel(const float* __restrict__ tokens,
     GemmTile_block<T_GATE_TILE>(tokens, gateWeights, out_regs, tokenIdx, 0,
                                 sharedMemPool);
     out_regs[0] =
-        Softmax_block<T_GATE_TILE::THREADS, float>(out_regs[0], sharedMemPool);
+        moe::tasks::internal::Softmax_block<T_GATE_TILE::THREADS, float>(
+            out_regs[0], sharedMemPool);
 
     char* sharedMemPoolBytes = reinterpret_cast<char*>(sharedMemPool);
     float* s_topkVals = reinterpret_cast<float*>(sharedMemPoolBytes);
@@ -107,8 +108,8 @@ __global__ void refRoutingKernel(const float* __restrict__ tokens,
         reinterpret_cast<int*>(sharedMemPoolBytes + sizeof(float) * TOPK);
     int* nextPool = s_topkIdx + TOPK;
 
-    Topk8_block<T_GATE_TILE::THREADS, float>(out_regs[0], s_topkVals, s_topkIdx,
-                                             nextPool);
+    moe::tasks::internal::Topk8_block<T_GATE_TILE::THREADS, float>(
+        out_regs[0], s_topkVals, s_topkIdx, nextPool);
 
     // Warp 0 pushes all the tasks...
     for (int i = 0; i < TOPK; ++i) {

@@ -26,7 +26,8 @@ __global__ void refHipKernel(const float* __restrict__ A,
 
     GemmTile_block<TGEMM_TILE>(A, B, out_regs, tokenIdx, 0, sharedMemPool);
     out_regs[0] =
-        Softmax_block<TGEMM_TILE::THREADS, float>(out_regs[0], sharedMemPool);
+        moe::tasks::internal::Softmax_block<TGEMM_TILE::THREADS, float>(
+            out_regs[0], sharedMemPool);
 
     char* sharedMemPoolBytes = reinterpret_cast<char*>(sharedMemPool);
     float* s_topkVals = reinterpret_cast<float*>(sharedMemPoolBytes);
@@ -34,8 +35,8 @@ __global__ void refHipKernel(const float* __restrict__ A,
         reinterpret_cast<int*>(sharedMemPoolBytes + sizeof(float) * TOPK);
     int* nextPool = s_topkIdx + TOPK;
 
-    Topk8_block<TGEMM_TILE::THREADS, float>(out_regs[0], s_topkVals, s_topkIdx,
-                                            nextPool);
+    moe::tasks::internal::Topk8_block<TGEMM_TILE::THREADS, float>(
+        out_regs[0], s_topkVals, s_topkIdx, nextPool);
 
     // Write to output:
     const int tid = threadIdx.x;
@@ -116,4 +117,4 @@ TEST(MoeGate, basicTest) {
   CheckAgainstRefBuffer(host_topkIdx.data(), refOut.topkIdx.data(),
                         refOut.topkIdx.size());
 }
-}
+}  // namespace
