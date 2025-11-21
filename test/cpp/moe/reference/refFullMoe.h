@@ -1,6 +1,6 @@
 #pragma once
-#include "../reference/refExpertFFN1.h"
-#include "../reference/refMoeGate.h"
+#include "refExpertFFN1.h"
+#include "refMoeGate.h"
 
 namespace test {
 // Reference implementation of full moe kernel.

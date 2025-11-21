@@ -1,9 +1,8 @@
 #pragma once
 
-#include <hip/hip_runtime.h>
-
-#include <cmath>
-
+namespace moe {
+namespace tasks {
+namespace internal {
 // GPT5-mini generated code:
 // Optimized device softmax for a single row where:
 //  - row length (cols) == _SIZE
@@ -28,46 +27,46 @@ __device__ float Softmax_block(T input, void* sharedMemPool) {
   const int warpId = tid >> 6;  // tid / 64
 
   // load value (use float for warp shuffles)
-  float val_f = input;
+  T val_f = input;
 
   // warp-level max reduction using shfl_down
-  float wmax = val_f;
+  T wmax = val_f;
   // offsets: 32,16,8,4,2,1 for 64-lane warp
   for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) {
-    float other = __shfl_down(wmax, offset);
+    T other = __shfl_down(wmax, offset);
     wmax = fmaxf(wmax, other);
   }
 
   // shared per-warp maxima and per-warp sums
-  float* sharedMemPoolFloat = reinterpret_cast<float*>(sharedMemPool);
-  float* s_warp_max = sharedMemPoolFloat;
-  float* s_warp_sum = sharedMemPoolFloat + NUM_WARPS;
+  T* sharedMemPoolFloat = reinterpret_cast<T*>(sharedMemPool);
+  T* s_warp_max = sharedMemPoolFloat;
+  T* s_warp_sum = sharedMemPoolFloat + NUM_WARPS;
 
   // warp leader writes warp max to shared
   if (lane == 0) s_warp_max[warpId] = wmax;
   __syncthreads();
 
   // thread 0 (or first warp) computes global max from per-warp maxima
-  float global_max_f;
+  T global_max_f;
   if (tid == 0) {
     double gm = -INFINITY;
     for (int w = 0; w < NUM_WARPS; ++w) {
       double v = static_cast<double>(s_warp_max[w]);
       if (v > gm) gm = v;
     }
-    global_max_f = static_cast<float>(gm);
+    global_max_f = static_cast<T>(gm);
     s_warp_max[0] = global_max_f;  // broadcast carrier
   }
   __syncthreads();
   global_max_f = s_warp_max[0];
 
   // compute exp shifted by global max (float)
-  float e = expf(val_f - global_max_f);
+  T e = expf(val_f - global_max_f);
 
   // warp-level sum of exponentials
-  float wsum = e;
+  T wsum = e;
   for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) {
-    float other = __shfl_down(wsum, offset);
+    T other = __shfl_down(wsum, offset);
     wsum += other;
   }
 
@@ -76,9 +75,9 @@ __device__ float Softmax_block(T input, void* sharedMemPool) {
   __syncthreads();
 
   // thread 0 reduces per-warp sums to global sum.
-  float global_sum_d;
+  T global_sum_d;
   if (tid == 0) {
-    float acc = 0.0;
+    T acc = 0.0f;
     for (int w = 0; w < NUM_WARPS; ++w) acc += s_warp_sum[w];
     global_sum_d = acc;
     s_warp_sum[0] = global_sum_d;  // carrier
@@ -88,8 +87,11 @@ __device__ float Softmax_block(T input, void* sharedMemPool) {
 
   // write normalized output
   if (global_sum_d <= 0.0) {
-    return static_cast<T>(1.0f / static_cast<float>(COLS));
+    return static_cast<T>(1.0f / static_cast<T>(COLS));
   } else {
     return static_cast<T>(e / global_sum_d);
   }
 }
+}  // namespace internal
+}  // namespace tasks
+}  // namespace moe

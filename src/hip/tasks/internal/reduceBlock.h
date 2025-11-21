@@ -1,8 +1,8 @@
 #pragma once
 
-#include <hip/hip_runtime.h>
-
+namespace moe {
 namespace tasks {
+namespace internal {
 // GPT5-mini generated code with my minor changes.
 /*
   Vectorized reduce for a tile TOPK x TILE_SIZE -> 1 x TILE_SIZE (column-wise
@@ -52,4 +52,6 @@ __device__ inline void Reduce_block(const float* __restrict__ in,
     out_vec[vecIdx] = acc;
   }
 }
+}  // namespace internal
 }  // namespace tasks
+}  // namespace moe

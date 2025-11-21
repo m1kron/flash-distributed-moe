@@ -1,10 +1,10 @@
 #include <hip/hip_runtime.h>
 
-#include "../../../src/hip/hipHostCommon.h"
-#include "../../../src/hip/tasks/internal/expertFFN1.h"
-#include "../../../src/hip/utils/hipDeviceUtils.h"
-#include "../reference/refExpertFFN1.h"
-#include "../utils/utils.h"
+#include "src/hip/hipHostCommon.h"
+#include "src/hip/tasks/internal/expertFFN1Block.h"
+#include "src/hip/utils/hipDeviceUtils.h"
+#include "test/cpp/moe/reference/refExpertFFN1.h"
+#include "test/cpp/utils/utils.h"
 
 namespace {
 constexpr int TOKENS_NUM = 48;
@@ -33,10 +33,10 @@ __global__ void hipExpertFFN1Kernel(const float* __restrict__ tokens,
 
   typename TExpertGemmTileParams::TOutputType
       outRegs[TExpertGemmTileParams::THREAD_OUTPUT_SIZE];
-  tasks::expertFFN1Task<TExpertGemmTileParams>(
+  moe::tasks::internal::expertFFN1_block<TExpertGemmTileParams>(
       tokens, expertWeights, outRegs, tokenIdx, tileCol, sharedMemPool);
-  WriteGemmTileToGlobalMem_block<TExpertGemmTileParams>(outRegs, output,
-                                                        tokenIdx, tileCol);
+  moe::tasks::internal::WriteGemmTileToGlobalMem_block<TExpertGemmTileParams>(
+      outRegs, output, tokenIdx, tileCol);
 }
 
 static hipError_t hipExpertFFN1(const float* tokens, const float* expertWeights,
@@ -53,7 +53,7 @@ static hipError_t hipExpertFFN1(const float* tokens, const float* expertWeights,
   return hipSuccess;
 }
 
-TEST(MoeExpertFFN1, basicTest) {
+TEST(MoeTasksInternalTests, MoeExpertFFN1_basicTest) {
   constexpr int TOKENS_SIZE = TOKENS_NUM * HIDDEN_SIZE;
   constexpr int EXPERTS_WEIGHTS_SIZE =
       HIDDEN_SIZE * 2 * EXPERT_INTERMEDIATE_SIZE;

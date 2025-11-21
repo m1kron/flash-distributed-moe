@@ -19,9 +19,10 @@ struct TestTileGemm {
     typename TGemmTileParams::TOutputType
         out_regs[TGemmTileParams::THREAD_OUTPUT_SIZE];
 
-    GemmTile_block<TGemmTileParams>(A, B, out_regs, blockTileRowStartIdx,
-                                    blockTileColStartIdx, sharedMemPool);
-    WriteGemmTileToGlobalMem_block<TGemmTileParams>(
+    moe::tasks::internal::GemmTile_block<TGemmTileParams>(
+        A, B, out_regs, blockTileRowStartIdx, blockTileColStartIdx,
+        sharedMemPool);
+    moe::tasks::internal::WriteGemmTileToGlobalMem_block<TGemmTileParams>(
         out_regs, C, blockTileRowStartIdx, blockTileColStartIdx);
   }
 };

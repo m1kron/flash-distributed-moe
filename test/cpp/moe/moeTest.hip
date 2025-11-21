@@ -1,8 +1,8 @@
 #include <hip/hip_runtime.h>
 
-#include "../reference/refFullMoe.h"
-#include "../utils/utils.h"
 #include "include/iMoeKernelLauncher.h"
+#include "test/cpp/moe/reference/refFullMoe.h"
+#include "test/cpp/utils/utils.h"
 
 namespace {
 constexpr int TOKENS_NUM = 48;
@@ -26,7 +26,7 @@ static void printResult(const float* result) {
   }
 }
 
-TEST(MoeFull, basicTest) {
+TEST(MoeTests, basic) {
   constexpr int TOKENS_SIZE = TOKENS_NUM * HIDDEN_SIZE;
   constexpr int GATE_WEIGHTS_SIZE = HIDDEN_SIZE * EXPERTS_NUM;
   constexpr int EXPERTS_FNN1_WEIGHTS_SIZE =

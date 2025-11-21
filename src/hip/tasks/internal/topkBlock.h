@@ -1,9 +1,8 @@
 #pragma once
 
-#include <hip/hip_runtime.h>
-
-#include <cfloat>
-#include <cstdint>
+namespace moe {
+namespace tasks {
+namespace internal {
 
 // GPT5-mini generated code with my minor changes.
 /*
@@ -79,3 +78,6 @@ __device__ void Topk8_block(T input, T* __restrict__ out_vals,
   }
   __syncthreads();
 }
+}  // namespace internal
+}  // namespace tasks
+}  // namespace moe

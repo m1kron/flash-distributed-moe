@@ -1,14 +1,14 @@
 #include <hip/hip_runtime.h>
 
-#include "../../../src/hip/hipHostCommon.h"
-#include "../../../src/hip/taskSystem/taskManager.h"
-#include "../../../src/hip/taskSystem/workerLoop.h"
-#include "../../../src/hip/tasks/internal/gemmTileBlock.h"
-#include "../../../src/hip/tasks/internal/softmaxBlock.h"
-#include "../../../src/hip/tasks/internal/topkBlock.h"
-#include "../../../src/hip/utils/hipDeviceUtils.h"
-#include "../reference/refMoeGate.h"
-#include "../utils/utils.h"
+#include "src/hip/hipHostCommon.h"
+#include "src/hip/taskSystem/taskManager.h"
+#include "src/hip/taskSystem/workerLoop.h"
+#include "src/hip/tasks/internal/gemmTileBlock.h"
+#include "src/hip/tasks/internal/softmaxBlock.h"
+#include "src/hip/tasks/internal/topkBlock.h"
+#include "src/hip/utils/hipDeviceUtils.h"
+#include "test/cpp/moe/reference/refMoeGate.h"
+#include "test/cpp/utils/utils.h"
 
 namespace {
 constexpr int TOKENS_NUM = 48;
@@ -60,8 +60,9 @@ __device__ void ExecuteTask(const ExpertTileTask& task, void* sharedMemPool) {
 
   typename T_EXPERT_TILE::TOutputType
       out_regs[T_EXPERT_TILE::THREAD_OUTPUT_SIZE];
-  GemmTile_block<T_EXPERT_TILE>(thisBlockTokens, thisExpertWeights, out_regs, 0,
-                                task.blockTileColStartIdx, sharedMemPool);
+  moe::tasks::internal::GemmTile_block<T_EXPERT_TILE>(
+      thisBlockTokens, thisExpertWeights, out_regs, 0,
+      task.blockTileColStartIdx, sharedMemPool);
 
   float* thisBlockOutput = task.output +
                            task.tokenIdx * TOPK * (T_EXPERT_TILE::N + 2) +
@@ -76,8 +77,8 @@ __device__ void ExecuteTask(const ExpertTileTask& task, void* sharedMemPool) {
 
   thisBlockOutput += 2;
 
-  WriteGemmTileToGlobalMem_block<T_EXPERT_TILE>(out_regs, thisBlockOutput, 0,
-                                                task.blockTileColStartIdx);
+  moe::tasks::internal::WriteGemmTileToGlobalMem_block<T_EXPERT_TILE>(
+      out_regs, thisBlockOutput, 0, task.blockTileColStartIdx);
 }
 
 template <typename T_GATE_TILE, typename T_EXPERT_TILE>
@@ -96,10 +97,11 @@ __global__ void refRoutingKernel(const float* __restrict__ tokens,
        tokenIdx += gridDim.x) {
     typename T_GATE_TILE::TOutputType out_regs[T_GATE_TILE::THREAD_OUTPUT_SIZE];
 
-    GemmTile_block<T_GATE_TILE>(tokens, gateWeights, out_regs, tokenIdx, 0,
-                                sharedMemPool);
+    moe::tasks::internal::GemmTile_block<T_GATE_TILE>(
+        tokens, gateWeights, out_regs, tokenIdx, 0, sharedMemPool);
     out_regs[0] =
-        Softmax_block<T_GATE_TILE::THREADS, float>(out_regs[0], sharedMemPool);
+        moe::tasks::internal::Softmax_block<T_GATE_TILE::THREADS, float>(
+            out_regs[0], sharedMemPool);
 
     char* sharedMemPoolBytes = reinterpret_cast<char*>(sharedMemPool);
     float* s_topkVals = reinterpret_cast<float*>(sharedMemPoolBytes);
@@ -107,8 +109,8 @@ __global__ void refRoutingKernel(const float* __restrict__ tokens,
         reinterpret_cast<int*>(sharedMemPoolBytes + sizeof(float) * TOPK);
     int* nextPool = s_topkIdx + TOPK;
 
-    Topk8_block<T_GATE_TILE::THREADS, float>(out_regs[0], s_topkVals, s_topkIdx,
-                                             nextPool);
+    moe::tasks::internal::Topk8_block<T_GATE_TILE::THREADS, float>(
+        out_regs[0], s_topkVals, s_topkIdx, nextPool);
 
     // Warp 0 pushes all the tasks...
     for (int i = 0; i < TOPK; ++i) {
@@ -300,7 +302,7 @@ static void printResult(const float* result) {
   }
 }
 
-TEST(MoeRouting, basicTest) {
+TEST(MoeTasksInternalTests, MoeRouting_basicTest) {
   constexpr int TOKENS_SIZE = TOKENS_NUM * HIDDEN_SIZE;
   constexpr int GATE_WEIGHTS_SIZE = HIDDEN_SIZE * EXPERTS_NUM;
   constexpr int ROUTING_SIZE = TOKENS_NUM * TOPK;
