@@ -59,8 +59,8 @@ __device__ void ExecuteExpertFFN1Task(const MoeTaskDesc& task,
       task.tokenIdx * MOE_METADATA::MOE_PROBLEM_CONFIG::TOPK * T_FFN1_TILE::N +
       task.topkSlotIdx * T_FFN1_TILE::N;
 
-  WriteGemmTileToGlobalMem_block<T_FFN1_TILE>(outRegs, thisBlockOutput, 0,
-                                              task.blockTileColStartIdx);
+  moe::tasks::internal::WriteGemmTileToGlobalMem_block<T_FFN1_TILE>(
+      outRegs, thisBlockOutput, 0, task.blockTileColStartIdx);
 
   __threadfence();
   constexpr int N_CHUNKS = T_FFN1_TILE::N / T_FFN1_TILE::TILE_N;
@@ -110,8 +110,9 @@ __device__ void ExecuteExpertFFN2Task(const MoeTaskDesc& task,
 
   typename T_FFN2_TILE::TOutputType outRegs[T_FFN2_TILE::THREAD_OUTPUT_SIZE];
 
-  GemmTile_block<T_FFN2_TILE>(thisBlockInput, thisffn2ExpertWeights, outRegs, 0,
-                              task.blockTileColStartIdx, sharedMemPool);
+  moe::tasks::internal::GemmTile_block<T_FFN2_TILE>(
+      thisBlockInput, thisffn2ExpertWeights, outRegs, 0,
+      task.blockTileColStartIdx, sharedMemPool);
 
   float* thisBlockOutput =
       task.ffn2Output +
@@ -123,8 +124,8 @@ __device__ void ExecuteExpertFFN2Task(const MoeTaskDesc& task,
     outRegs[i] *= task.expertWeight;
   }
 
-  WriteGemmTileToGlobalMem_block<T_FFN2_TILE>(outRegs, thisBlockOutput, 0,
-                                              task.blockTileColStartIdx);
+  moe::tasks::internal::WriteGemmTileToGlobalMem_block<T_FFN2_TILE>(
+      outRegs, thisBlockOutput, 0, task.blockTileColStartIdx);
 
   __threadfence();
   constexpr int FFN2_DEP_SIZE =
@@ -229,7 +230,8 @@ __global__ void moeKernel(const typename MOE_METADATA::MOE_PROBLEM_CONFIG::
         out_regs[MOE_METADATA::TILES_CONFIG::GATE_TILE_METADATA::
                      THREAD_OUTPUT_SIZE];
 
-    GemmTile_block<typename MOE_METADATA::TILES_CONFIG::GATE_TILE_METADATA>(
+    moe::tasks::internal::GemmTile_block<
+        typename MOE_METADATA::TILES_CONFIG::GATE_TILE_METADATA>(
         tokens, gateWeights, out_regs, tokenIdx, 0, sharedMemPool);
     out_regs[0] = moe::tasks::internal::Softmax_block<
         MOE_METADATA::TILES_CONFIG::GATE_TILE_METADATA::THREADS, float>(

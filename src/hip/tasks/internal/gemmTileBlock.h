@@ -1,15 +1,21 @@
 #pragma once
 #include "src/hip/common/gemmTileMetadata.h"
 
+namespace moe {
+namespace tasks {
+namespace internal {
+
 // NOTE: GPT5-mini generated code with my minor changes.
 // Device GEMM for single block.
 // A: M x K (row-major), B: K x N (row-major), C: M x N (row-major).
 template <typename GEMM_TILE_PARAMS>
 __device__ void GemmTile_block(
-    const float* __restrict__ A, const float* __restrict__ B,
+    const typename GEMM_TILE_PARAMS::TInputType* __restrict__ A,
+    const typename GEMM_TILE_PARAMS::TInputType* __restrict__ B,
     typename GEMM_TILE_PARAMS::TOutputType* __restrict__ CTile_thread_regs,
     int blockTileRowStartIdx, int blockTileColStartIdx,
     void* __restrict__ sharedMemPool) {
+  using TType = typename GEMM_TILE_PARAMS::TInputType;
   constexpr int TILE_M = GEMM_TILE_PARAMS::TILE_M;
   constexpr int TILE_N = GEMM_TILE_PARAMS::TILE_N;
   constexpr int K = GEMM_TILE_PARAMS::K;
@@ -20,9 +26,9 @@ __device__ void GemmTile_block(
   const int BLOCK_START_ROW = blockTileRowStartIdx * TILE_M;
   const int BLOCK_START_COL = blockTileColStartIdx * TILE_N;
 
-  float* sharedMemPoolFloat = reinterpret_cast<float*>(sharedMemPool);
-  float* sA = sharedMemPoolFloat;
-  float* sB = sharedMemPoolFloat + TILE_M * TILE_K;
+  TType* sharedMemPoolFloat = reinterpret_cast<TType*>(sharedMemPool);
+  TType* sA = sharedMemPoolFloat;
+  TType* sB = sharedMemPoolFloat + TILE_M * TILE_K;
 
   const int tid = threadIdx.x;
   const int baseLinear = tid * OUT_PER_THREAD;
@@ -59,8 +65,8 @@ __device__ void GemmTile_block(
         const int linear = baseLinear + out;
         const int r = linear / TILE_N;
         const int c = linear % TILE_N;
-        const float aval = sA[r * TILE_K + kLocal];
-        const float bval = sB[kLocal * TILE_N + c];
+        const TType aval = sA[r * TILE_K + kLocal];
+        const TType bval = sB[kLocal * TILE_N + c];
         CTile_thread_regs[out] += aval * bval;
       }
     }
@@ -93,3 +99,7 @@ __device__ void WriteGemmTileToGlobalMem_block(
         outTile_thread_regs[out];
   }
 }
+
+}  // namespace internal
+}  // namespace tasks
+}  // namespace moe

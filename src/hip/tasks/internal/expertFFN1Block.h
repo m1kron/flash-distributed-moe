@@ -43,11 +43,12 @@ __device__ void expertFFN1_block(
 
   // TODO: Fuse gemms.
   typename T_FFN1_TILE::TOutputType w1_regs[T_FFN1_TILE::THREAD_OUTPUT_SIZE];
-  GemmTile_block<T_FFN1_TILE>(tokens, expertWeights, w1_regs, tokenIdx, tileCol,
-                              sharedMemPool);
+  moe::tasks::internal::GemmTile_block<T_FFN1_TILE>(
+      tokens, expertWeights, w1_regs, tokenIdx, tileCol, sharedMemPool);
 
-  GemmTile_block<T_FFN1_TILE>(tokens, expertWeights, outRegs, tokenIdx,
-                              tileCol + N_CHUNKS, sharedMemPool);
+  moe::tasks::internal::GemmTile_block<T_FFN1_TILE>(
+      tokens, expertWeights, outRegs, tokenIdx, tileCol + N_CHUNKS,
+      sharedMemPool);
 
   // Silu:
   for (int i = 0; i < T_FFN1_TILE::THREAD_OUTPUT_SIZE; ++i) {

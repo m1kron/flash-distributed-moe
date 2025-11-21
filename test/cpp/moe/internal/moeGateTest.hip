@@ -3,7 +3,7 @@
 #include "src/hip/tasks/internal/gemmTileBlock.h"
 #include "src/hip/tasks/internal/softmaxBlock.h"
 #include "src/hip/tasks/internal/topkBlock.h"
-#include "test/cpp/reference/refMoeGate.h"
+#include "test/cpp/moe/reference/refMoeGate.h"
 #include "test/cpp/utils/utils.h"
 
 namespace {
@@ -24,7 +24,8 @@ __global__ void refHipKernel(const float* __restrict__ A,
   for (int tokenIdx = blockIdx.x; tokenIdx < M_SIZE; tokenIdx += gridDim.x) {
     typename TGEMM_TILE::TOutputType out_regs[TGEMM_TILE::THREAD_OUTPUT_SIZE];
 
-    GemmTile_block<TGEMM_TILE>(A, B, out_regs, tokenIdx, 0, sharedMemPool);
+    moe::tasks::internal::GemmTile_block<TGEMM_TILE>(A, B, out_regs, tokenIdx,
+                                                     0, sharedMemPool);
     out_regs[0] =
         moe::tasks::internal::Softmax_block<TGEMM_TILE::THREADS, float>(
             out_regs[0], sharedMemPool);
@@ -67,7 +68,7 @@ hipError_t refHipGemm(const float* A, const float* B, float* topkVals,
   return hipSuccess;
 }
 
-TEST(MoeGate, basicTest) {
+TEST(MoeTasksInternalTests, MoeGate_basicTest) {
   constexpr int a_size = M_SIZE * K_SIZE;
   constexpr int b_size = K_SIZE * N_SIZE;
   constexpr int c_size = M_SIZE * N_SIZE;
