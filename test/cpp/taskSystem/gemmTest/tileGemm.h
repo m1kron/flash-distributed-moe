@@ -16,7 +16,7 @@ struct TestTileGemm {
       const float* __restrict__ A, const float* __restrict__ B,
       float* __restrict__ C, int blockTileRowStartIdx, int blockTileColStartIdx,
       void* sharedMemPool) {
-    typename TGemmTileParams::TOutputType
+    typename TGemmTileParams::TType
         out_regs[TGemmTileParams::THREAD_OUTPUT_SIZE];
 
     moe::tasks::internal::GemmTile_block<TGemmTileParams>(

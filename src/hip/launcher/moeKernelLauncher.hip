@@ -48,7 +48,7 @@ __device__ void ExecuteExpertFFN1Task(const MoeTaskDesc& task,
   const float* thisffn1ExpertWeights =
       task.ffn1ExpertWeights + task.expertIdx * T_FFN1_TILE::K * T_FFN1_TILE::N;
 
-  typename T_FFN1_TILE::TOutputType outRegs[T_FFN1_TILE::THREAD_OUTPUT_SIZE];
+  typename T_FFN1_TILE::TType outRegs[T_FFN1_TILE::THREAD_OUTPUT_SIZE];
 
   tasks::internal::expertFFN1_block<T_FFN1_TILE>(
       thisBlockTokens, thisffn1ExpertWeights, outRegs, 0,
@@ -108,7 +108,7 @@ __device__ void ExecuteExpertFFN2Task(const MoeTaskDesc& task,
   const float* thisffn2ExpertWeights =
       task.ffn2ExpertWeights + task.expertIdx * T_FFN2_TILE::K * T_FFN2_TILE::N;
 
-  typename T_FFN2_TILE::TOutputType outRegs[T_FFN2_TILE::THREAD_OUTPUT_SIZE];
+  typename T_FFN2_TILE::TType outRegs[T_FFN2_TILE::THREAD_OUTPUT_SIZE];
 
   moe::tasks::internal::GemmTile_block<T_FFN2_TILE>(
       thisBlockInput, thisffn2ExpertWeights, outRegs, 0,
@@ -226,9 +226,8 @@ __global__ void moeKernel(const typename MOE_METADATA::MOE_PROBLEM_CONFIG::
   __shared__ char sharedMemPool[SHARED_MEM_SIZE_BYTES];
 
   for (int tokenIdx = blockIdx.x; tokenIdx < tokensNum; tokenIdx += gridDim.x) {
-    typename MOE_METADATA::TILES_CONFIG::GATE_TILE_METADATA::TOutputType
-        out_regs[MOE_METADATA::TILES_CONFIG::GATE_TILE_METADATA::
-                     THREAD_OUTPUT_SIZE];
+    typename MOE_METADATA::TILES_CONFIG::GATE_TILE_METADATA::TType out_regs
+        [MOE_METADATA::TILES_CONFIG::GATE_TILE_METADATA::THREAD_OUTPUT_SIZE];
 
     moe::tasks::internal::GemmTile_block<
         typename MOE_METADATA::TILES_CONFIG::GATE_TILE_METADATA>(

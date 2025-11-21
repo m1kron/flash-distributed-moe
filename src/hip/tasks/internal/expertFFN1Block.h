@@ -24,10 +24,10 @@ inline __device__ float silu(float a, float b) {
 // T_OUTPUT_TILE::THREAD_OUTPUT_SIZE;
 template <typename T_OUTPUT_TILE>
 __device__ void expertFFN1_block(
-    const typename T_OUTPUT_TILE::TInputType* __restrict__ tokens,
-    const typename T_OUTPUT_TILE::TInputType* __restrict__ expertWeights,
-    typename T_OUTPUT_TILE::TOutputType* __restrict__ outRegs, int rowIdx,
-    int colIdx, void* sharedMemPool) {
+    const typename T_OUTPUT_TILE::TType* __restrict__ tokens,
+    const typename T_OUTPUT_TILE::TType* __restrict__ expertWeights,
+    typename T_OUTPUT_TILE::TType* __restrict__ outRegs, int rowIdx, int colIdx,
+    void* sharedMemPool) {
   constexpr int N_CHUNKS = T_OUTPUT_TILE::N / T_OUTPUT_TILE::TILE_N;
 
   const int tokenIdx = rowIdx;
@@ -42,7 +42,7 @@ __device__ void expertFFN1_block(
                 T_OUTPUT_TILE::THREAD_OUTPUT_SIZE);
 
   // TODO: Fuse gemms.
-  typename T_FFN1_TILE::TOutputType w1_regs[T_FFN1_TILE::THREAD_OUTPUT_SIZE];
+  typename T_FFN1_TILE::TType w1_regs[T_FFN1_TILE::THREAD_OUTPUT_SIZE];
   moe::tasks::internal::GemmTile_block<T_FFN1_TILE>(
       tokens, expertWeights, w1_regs, tokenIdx, tileCol, sharedMemPool);
 

@@ -58,8 +58,7 @@ __device__ void ExecuteTask(const ExpertTileTask& task, void* sharedMemPool) {
   const float* thisExpertWeights =
       task.expertWeights + task.expertIdx * T_EXPERT_TILE::K * T_EXPERT_TILE::N;
 
-  typename T_EXPERT_TILE::TOutputType
-      out_regs[T_EXPERT_TILE::THREAD_OUTPUT_SIZE];
+  typename T_EXPERT_TILE::TType out_regs[T_EXPERT_TILE::THREAD_OUTPUT_SIZE];
   moe::tasks::internal::GemmTile_block<T_EXPERT_TILE>(
       thisBlockTokens, thisExpertWeights, out_regs, 0,
       task.blockTileColStartIdx, sharedMemPool);
@@ -95,7 +94,7 @@ __global__ void refRoutingKernel(const float* __restrict__ tokens,
 
   for (int tokenIdx = blockIdx.x; tokenIdx < TOKENS_NUM;
        tokenIdx += gridDim.x) {
-    typename T_GATE_TILE::TOutputType out_regs[T_GATE_TILE::THREAD_OUTPUT_SIZE];
+    typename T_GATE_TILE::TType out_regs[T_GATE_TILE::THREAD_OUTPUT_SIZE];
 
     moe::tasks::internal::GemmTile_block<T_GATE_TILE>(
         tokens, gateWeights, out_regs, tokenIdx, 0, sharedMemPool);

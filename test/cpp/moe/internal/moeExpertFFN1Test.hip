@@ -31,7 +31,7 @@ __global__ void hipExpertFFN1Kernel(const float* __restrict__ tokens,
   const int tokenIdx = blockIdx.x / N_CHUNKS;
   const int tileCol = blockIdx.x % N_CHUNKS;
 
-  typename TExpertGemmTileParams::TOutputType
+  typename TExpertGemmTileParams::TType
       outRegs[TExpertGemmTileParams::THREAD_OUTPUT_SIZE];
   moe::tasks::internal::expertFFN1_block<TExpertGemmTileParams>(
       tokens, expertWeights, outRegs, tokenIdx, tileCol, sharedMemPool);
