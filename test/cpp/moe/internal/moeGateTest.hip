@@ -113,9 +113,7 @@ TEST(MoeTasksInternalTests, MoeGate_basicTest) {
   auto refOut = test::refMoeGate(host_a.data(), host_b.data(), M_SIZE, N_SIZE,
                                  K_SIZE, TOPK);
 
-  CheckAgainstRefBuffer(host_topkVals.data(), refOut.topkVals.data(),
-                        refOut.topkVals.size());
-  CheckAgainstRefBuffer(host_topkIdx.data(), refOut.topkIdx.data(),
-                        refOut.topkIdx.size());
+  CheckAgainstRefBuffer(host_topkVals, refOut.topkVals);
+  CheckAgainstRefBuffer(host_topkIdx, refOut.topkIdx);
 }
 }  // namespace

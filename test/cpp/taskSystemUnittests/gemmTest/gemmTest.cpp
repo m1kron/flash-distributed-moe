@@ -65,7 +65,7 @@ void PerformGemmCorrectnessTest(const TFunc func) {
   HIP_ERROR_ASSERT(hipFree(d_b));
   HIP_ERROR_ASSERT(hipFree(d_c));
 
-  CheckConstValBuffer(host_c.data(), host_c.size(), 2048.0f);
+  CheckConstValBuffer(host_c, 2048.0f);
 }
 
 TEST(TaskSystemUnittests, TaskSystemGemm) {

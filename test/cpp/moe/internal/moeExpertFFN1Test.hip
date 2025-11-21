@@ -100,6 +100,6 @@ TEST(MoeTasksInternalTests, MoeExpertFFN1_basicTest) {
       test::refExpertFFN1(tokens_host.data(), expertWeights_host.data(),
                           TOKENS_NUM, HIDDEN_SIZE, EXPERT_INTERMEDIATE_SIZE);
 
-  CheckAgainstRefBuffer(output_host.data(), refOut.data(), refOut.size());
+  CheckAgainstRefBuffer(output_host, refOut);
 }
 }  // namespace

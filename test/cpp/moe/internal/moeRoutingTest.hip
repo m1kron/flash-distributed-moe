@@ -368,6 +368,6 @@ TEST(MoeTasksInternalTests, MoeRouting_basicTest) {
 
   // test::printResult(output_host.data());
 
-  CheckAgainstRefBuffer(output_host.data(), refOut.data(), refOut.size());
+  CheckAgainstRefBuffer(output_host, refOut);
 }
 }  // namespace
