@@ -67,6 +67,8 @@ hipError_t moeKernelLaunchFunc(InternalState* state, const void* tokens,
 hipError_t MoeKernelLauncher::Init(hipStream_t stream, int maxTokens) {
   m_internalState = new InternalState();
 
+  // TODO: Allocate all mem using as a single mem block.
+
   const int ffn1OutputSize =
       maxTokens * moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::TOPK *
       moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::EXPERT_INTERMEDIATE_SIZE;

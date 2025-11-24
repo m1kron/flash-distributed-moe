@@ -37,6 +37,7 @@ constexpr T max(T a, T b) {
   return a > b ? a : b;
 }
 
+// Main MOE kernel.
 template <typename MOE_METADATA>
 __global__ void moeKernel(const typename MOE_METADATA::MOE_PROBLEM_CONFIG::
                               TDataType* __restrict__ tokens,
@@ -64,6 +65,8 @@ __global__ void moeKernel(const typename MOE_METADATA::MOE_PROBLEM_CONFIG::
 
   using TType = typename MOE_METADATA::TILES_CONFIG::GATE_TILE_METADATA::TType;
 
+  // Gate is scheduled statisically to avoid overhead of task system
+  // scheduling.
   for (int tokenIdx = blockIdx.x; tokenIdx < tokensNum; tokenIdx += gridDim.x) {
     TType* topkVals_shared = nullptr;
     int* topkIdx_shared = nullptr;
@@ -75,6 +78,7 @@ __global__ void moeKernel(const typename MOE_METADATA::MOE_PROBLEM_CONFIG::
                                                 &topkIdx_shared, sharedMemPool);
 
     // Warp 0 pushes all the tasks...
+    // TODO: make it more paralllel.
     for (int i = 0; i < MOE_METADATA::MOE_PROBLEM_CONFIG::TOPK; ++i) {
       MoeTaskDesc rTask;
       rTask.ffn1ExpertWeights = ffn1ExpertWeights;

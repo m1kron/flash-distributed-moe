@@ -5,7 +5,7 @@ namespace moe {
 
 enum TaskType : int { FFN1, FFN2, REDUCE };
 
-// Moe taask descriptor.
+// Moe task descriptor.
 struct __align__(16) MoeTaskDesc {
   const void* __restrict__ ffn1ExpertWeights;
   const void* __restrict__ ffn2ExpertWeights;
