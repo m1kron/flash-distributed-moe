@@ -4,6 +4,7 @@
 
 namespace moe {
 
+// TODO: A POC version of API. Will be subject of changes in the future.
 // Main interface for moe kernel launcher.
 class IMoeKernelLauncher {
  public:

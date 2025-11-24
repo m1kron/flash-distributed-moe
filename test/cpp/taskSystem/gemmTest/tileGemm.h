@@ -1,5 +1,5 @@
 #pragma once
-#include "src/hip/tasks/internal/gemmTileBlock.h"
+#include "src/hip/kernel/tasks/internal/gemmTileBlock.h"
 
 constexpr int TILE_M = 64;
 constexpr int TILE_N = 32;

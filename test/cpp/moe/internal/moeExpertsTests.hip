@@ -1,12 +1,10 @@
 #include <hip/hip_runtime.h>
 
 #include "src/hip/hipHostCommon.h"
+#include "src/hip/kernel/tasks/internal/expertFFN1Block.h"
+#include "src/hip/kernel/tasks/internal/gateBlock.h"
 #include "src/hip/taskSystem/taskManager.h"
 #include "src/hip/taskSystem/workerLoop.h"
-#include "src/hip/tasks/internal/expertFFN1Block.h"
-#include "src/hip/tasks/internal/gemmTileBlock.h"
-#include "src/hip/tasks/internal/softmaxBlock.h"
-#include "src/hip/tasks/internal/topkBlock.h"
 #include "src/hip/utils/hipDeviceUtils.h"
 #include "test/cpp/moe/reference/refExpertFFN1.h"
 #include "test/cpp/moe/reference/refMoeGate.h"
@@ -187,22 +185,12 @@ __global__ void refHipGatefRoutingExpertsKernel(
 
   for (int tokenIdx = blockIdx.x; tokenIdx < TOKENS_NUM;
        tokenIdx += gridDim.x) {
-    typename T_GATE_TILE::TType out_regs[T_GATE_TILE::THREAD_OUTPUT_SIZE];
+    typename T_GATE_TILE::TType* topkVals_shared = nullptr;
+    int* topkIdx_shared = nullptr;
 
-    moe::tasks::internal::GemmTile_block<T_GATE_TILE>(
-        tokens, gateWeights, out_regs, tokenIdx, 0, sharedMemPool);
-    out_regs[0] =
-        moe::tasks::internal::Softmax_block<T_GATE_TILE::THREADS, float>(
-            out_regs[0], sharedMemPool);
-
-    char* sharedMemPoolBytes = reinterpret_cast<char*>(sharedMemPool);
-    float* s_topkVals = reinterpret_cast<float*>(sharedMemPoolBytes);
-    int* s_topkIdx =
-        reinterpret_cast<int*>(sharedMemPoolBytes + sizeof(float) * TOPK);
-    int* nextPool = s_topkIdx + TOPK;
-
-    moe::tasks::internal::Topk8_block<T_GATE_TILE::THREADS, float>(
-        out_regs[0], s_topkVals, s_topkIdx, nextPool);
+    moe::tasks::internal::gate_block<T_GATE_TILE, TOPK>(
+        tokens, gateWeights, tokenIdx, &topkVals_shared, &topkIdx_shared,
+        sharedMemPool);
 
     // Warp 0 pushes all the tasks...
     for (int i = 0; i < TOPK; ++i) {
@@ -213,8 +201,8 @@ __global__ void refHipGatefRoutingExpertsKernel(
       rTask.ffn1Output = ffn1Output;
       rTask.ffn2Output = ffn2Output;
       rTask.tokenIdx = tokenIdx;
-      rTask.expertIdx = s_topkIdx[i];
-      rTask.expertWeight = s_topkVals[i];
+      rTask.expertIdx = topkIdx_shared[i];
+      rTask.expertWeight = topkVals_shared[i];
       rTask.blockTileColStartIdx = 0;
       rTask.topkSlotIdx = i;
       rTask.taskType = 0;
