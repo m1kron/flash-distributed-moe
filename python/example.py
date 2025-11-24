@@ -13,7 +13,7 @@ def main():
 
     tokens = torch.randn(tokens_num, hidden, device=device, dtype=torch.float32)
     gate_w = torch.randn(hidden, experts, device=device, dtype=torch.float32)
-    ffn1_w = torch.randn(experts, hidden, inter, device=device, dtype=torch.float32)
+    ffn1_w = torch.randn(experts, hidden, inter*2, device=device, dtype=torch.float32)
     ffn2_w = torch.randn(experts, inter, hidden, device=device, dtype=torch.float32)
     output = torch.empty(tokens_num, hidden, device=device, dtype=torch.float32)
 
