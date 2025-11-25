@@ -37,11 +37,29 @@ class MoeKernelLauncherWrapper {
               int tokens_num) {
     if (!ptr_) throw std::runtime_error("Launcher was destroyed");
 
+    auto tokensSize = tokens.sizes()[0];
+    auto hiddenSize = tokens.sizes()[1];
+    auto expertsSize = gate_weights.sizes()[0];
+    auto interSize = ffn2_expert_weights.sizes()[1];
+
     CHECK_TENSOR(tokens);
     CHECK_TENSOR(gate_weights);
     CHECK_TENSOR(ffn1_expert_weights);
     CHECK_TENSOR(ffn2_expert_weights);
     CHECK_TENSOR(output);
+
+    TORCH_CHECK(gate_weights.sizes()[1] == hiddenSize);
+
+    TORCH_CHECK(ffn1_expert_weights.sizes()[0] == expertsSize);
+    TORCH_CHECK(ffn1_expert_weights.sizes()[1] == hiddenSize);
+    TORCH_CHECK(ffn1_expert_weights.sizes()[2] == 2 * interSize);
+
+    TORCH_CHECK(ffn2_expert_weights.sizes()[0] == expertsSize);
+    TORCH_CHECK(ffn2_expert_weights.sizes()[1] == interSize);
+    TORCH_CHECK(ffn2_expert_weights.sizes()[2] == hiddenSize);
+
+    TORCH_CHECK(output.sizes()[0] == tokensSize);
+    TORCH_CHECK(output.sizes()[1] == hiddenSize);
 
     const void* t_ptr = tokens.data_ptr();
     const void* gw_ptr = gate_weights.data_ptr();
