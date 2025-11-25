@@ -1,6 +1,3 @@
-import os
-import sys
-import pytest
 import torch
 import flashMoeLauncher
 
@@ -19,8 +16,8 @@ def test_pythonBinding():
     # Gate weights expected as [experts, hidden] in most implementations
     gate_w = torch.randn(experts, hidden, device=device, dtype=torch.float32)
     # Expert weights (placeholders; match your launcher’s expected layout)
-    ffn1_w = torch.randn(experts, hidden, inter * 2, device=device, dtype=torch.float32)
-    ffn2_w = torch.randn(experts, inter, hidden, device=device, dtype=torch.float32)
+    ffn1_w = torch.randn(experts, inter * 2, hidden, device=device, dtype=torch.float32)
+    ffn2_w = torch.randn(experts, hidden, inter, device=device, dtype=torch.float32)
     output = torch.empty(tokens_num, hidden, device=device, dtype=torch.float32)
 
     launcher = flashMoeLauncher.MoeKernelLauncher()
@@ -28,7 +25,7 @@ def test_pythonBinding():
     launcher.create(tokens_num)
 
     # Call launch; some bindings return hipError code, others None
-    launcher.launch(tokens, gate_w, ffn1_w, ffn2_w, output, tokens_num)
+    launcher.launch(tokens, gate_w, ffn1_w, ffn2_w, output)
     torch.cuda.synchronize(device)
 
     assert output.shape == (tokens_num, hidden)
