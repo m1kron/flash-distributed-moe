@@ -33,14 +33,13 @@ class MoeKernelLauncherWrapper {
  public:
   void launch(const at::Tensor& tokens, const at::Tensor& gate_weights,
               const at::Tensor& ffn1_expert_weights,
-              const at::Tensor& ffn2_expert_weights, const at::Tensor& output,
-              int tokens_num) {
+              const at::Tensor& ffn2_expert_weights, const at::Tensor& output) {
     if (!ptr_) throw std::runtime_error("Launcher was destroyed");
 
     auto tokensSize = tokens.sizes()[0];
     auto hiddenSize = tokens.sizes()[1];
     auto expertsSize = gate_weights.sizes()[0];
-    auto interSize = ffn2_expert_weights.sizes()[1];
+    auto interSize = ffn2_expert_weights.sizes()[2];
 
     CHECK_TENSOR(tokens);
     CHECK_TENSOR(gate_weights);
@@ -51,12 +50,12 @@ class MoeKernelLauncherWrapper {
     TORCH_CHECK(gate_weights.sizes()[1] == hiddenSize);
 
     TORCH_CHECK(ffn1_expert_weights.sizes()[0] == expertsSize);
-    TORCH_CHECK(ffn1_expert_weights.sizes()[1] == hiddenSize);
-    TORCH_CHECK(ffn1_expert_weights.sizes()[2] == 2 * interSize);
+    TORCH_CHECK(ffn1_expert_weights.sizes()[1] == 2 * interSize);
+    TORCH_CHECK(ffn1_expert_weights.sizes()[2] == hiddenSize);
 
     TORCH_CHECK(ffn2_expert_weights.sizes()[0] == expertsSize);
-    TORCH_CHECK(ffn2_expert_weights.sizes()[1] == interSize);
-    TORCH_CHECK(ffn2_expert_weights.sizes()[2] == hiddenSize);
+    TORCH_CHECK(ffn2_expert_weights.sizes()[1] == hiddenSize);
+    TORCH_CHECK(ffn2_expert_weights.sizes()[2] == interSize);
 
     TORCH_CHECK(output.sizes()[0] == tokensSize);
     TORCH_CHECK(output.sizes()[1] == hiddenSize);
@@ -69,7 +68,7 @@ class MoeKernelLauncherWrapper {
     hipStream_t stream = at::cuda::getCurrentCUDAStream();
 
     HIP_ERROR_CHECK(ptr_->Launch(t_ptr, gw_ptr, f1_ptr, f2_ptr, out_ptr,
-                                 tokens_num, stream));
+                                 tokensSize, stream));
   }
 
   void destroy() {
@@ -98,8 +97,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       .def(py::init())
       .def("launch", &MoeKernelLauncherWrapper::launch, py::arg("tokens"),
            py::arg("gate_weights"), py::arg("ffn1_expert_weights"),
-           py::arg("ffn2_expert_weights"), py::arg("output"),
-           py::arg("tokens_num"))
+           py::arg("ffn2_expert_weights"), py::arg("output"))
       .def("destroy", &MoeKernelLauncherWrapper::destroy)
       .def("create", &MoeKernelLauncherWrapper::create, py::arg("max_tokens"))
       .def_property_readonly("valid", &MoeKernelLauncherWrapper::valid);
