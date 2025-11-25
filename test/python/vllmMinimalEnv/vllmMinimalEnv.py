@@ -74,10 +74,14 @@ class VllmMinimalEnv:
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.ops = []
 
-    def setup_vllm_env_with_default_configs(self):
+    def setup_vllm_env_with_default_configs(self, wanted_dtype=None):
         self.engine_args = EngineArgs(model="Qwen/Qwen3-30B-A3B", dtype="float16")
         self.vllm_config = self.engine_args.create_engine_config()
-        self.moe_dtype = self.vllm_config.model_config.dtype
+
+        if wanted_dtype == None:
+            wanted_dtype = self.vllm_config.model_config.dtype
+            
+        self.moe_dtype = wanted_dtype
 
         self.config = Qwen3MoeConfig()
         self.config.architectures = ["Qwen3MoeForCausalLM"]
@@ -90,8 +94,7 @@ class VllmMinimalEnv:
         with set_current_vllm_config(self.vllm_config):
             self._setup_model_parallel()
 
-    def createMoeInstance(self, class_name, quant_config, prefix, enable_eplb):
-        klass = globals()[class_name]
+    def createMoeInstance(self, klass, quant_config, prefix, enable_eplb):
         with set_current_vllm_config(self.vllm_config):
             moe = klass(
                 config=self.config,
