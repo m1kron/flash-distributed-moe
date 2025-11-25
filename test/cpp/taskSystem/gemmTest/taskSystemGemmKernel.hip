@@ -60,8 +60,6 @@ struct TaskSystemGemmParams {
 hipError_t initTaskSystemGemm(void** state) {
   constexpr int M_SIZE = 2048;
   constexpr int N_SIZE = 1536;
-  assert(M == 2048);
-  assert(N == 1536);
   TaskSystemGemmParams* params = new TaskSystemGemmParams();
   HIP_ERROR_CHECK(params->managerHost.Init(params->stream));
 
