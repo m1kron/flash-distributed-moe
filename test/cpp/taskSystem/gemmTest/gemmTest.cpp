@@ -2,9 +2,12 @@
 
 #include "staticGemmKernel.h"
 #include "taskSystemGemmKernel.h"
+#include "test/cpp/moe/reference/refGemm.h"
 #include "test/cpp/utils/utils.h"
 
 namespace {
+
+static constexpr float ABS_ERROR = 1e-3f;
 
 hipError_t taskSystemGemmFunc(const float* A, const float* B, float* C, int M,
                               int N, int K) {
@@ -27,14 +30,9 @@ void PerformGemmCorrectnessTest(const TFunc func) {
   constexpr int b_size = k_size * n_size;
   constexpr int c_size = m_size * n_size;
 
-  std::vector<float> host_a(a_size);
-  std::fill(host_a.begin(), host_a.end(), 1.f);
-
-  std::vector<float> host_b(b_size);
-  std::fill(host_b.begin(), host_b.end(), 1.f);
-
-  std::vector<float> host_c(c_size);
-  std::fill(host_c.begin(), host_c.end(), 0.f);
+  std::vector<float> host_a = RandomVector<float>(a_size);
+  std::vector<float> host_b = RandomVector<float>(b_size);
+  std::vector<float> host_c = RandomVector<float>(c_size);
 
   float* d_a = nullptr;
   float* d_b = nullptr;
@@ -62,7 +60,10 @@ void PerformGemmCorrectnessTest(const TFunc func) {
   HIP_ERROR_ASSERT(hipFree(d_b));
   HIP_ERROR_ASSERT(hipFree(d_c));
 
-  CheckConstValBuffer(host_c, 2048.0f);
+  auto ref =
+      test::refGemm(host_a.data(), host_b.data(), m_size, n_size, k_size);
+
+  CheckAgainstRefBuffer(host_c, ref, ABS_ERROR);
 }
 
 TEST(TaskSystemTests, TaskSystemGemm) {
