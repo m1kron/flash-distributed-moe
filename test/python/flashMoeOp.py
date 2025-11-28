@@ -3,11 +3,12 @@ import torch
 from vllm.model_executor.models.qwen3_moe import Qwen3MoeSparseMoeBlock
 
 
+# Initial Flash moe wrapper for vllm.
 class FlashMoeBlockWrapper(torch.nn.Module):
 
     def __init__(
         self,
-        qwen3MoeSparseMoeBlockModule,
+        qwen3MoeSparseMoeBlockModule: Qwen3MoeSparseMoeBlock,
     ):
         super().__init__()
         self.qwen3MoeSparseMoeBlockModule = qwen3MoeSparseMoeBlockModule
@@ -18,26 +19,13 @@ class FlashMoeBlockWrapper(torch.nn.Module):
         self.launcher.destroy()
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        # NOTE: hidden_states can have either 1D or 2D shape.
-
-        # out = super().forward(hidden_states)
-
         tokens = hidden_states
         gateWeights = self.qwen3MoeSparseMoeBlockModule.gate.weight
         ffn1ExpertWeights = self.qwen3MoeSparseMoeBlockModule.experts.w13_weight
         ffn2ExpertWeights = self.qwen3MoeSparseMoeBlockModule.experts.w2_weight
 
-        print(f"ffn2ExpertWeights:", ffn2ExpertWeights[0, 0, :5].tolist())
-
-        output = torch.empty_like(tokens)
-
-        # print(f"tokens: {tokens.shape}")
-        # print(f"gateWeights: {gateWeights.shape}")
-        # print(f"ffn1ExpertWeights: {ffn1ExpertWeights.shape}")
-        # print(f"ffn2ExpertWeights: {ffn2ExpertWeights.shape}")
-
         self.launcher.launch(
-            tokens, gateWeights, ffn1ExpertWeights, ffn2ExpertWeights, output
+            tokens, gateWeights, ffn1ExpertWeights, ffn2ExpertWeights, tokens
         )
 
-        return output
+        return tokens
