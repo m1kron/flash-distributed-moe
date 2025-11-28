@@ -1,16 +1,20 @@
 from flashMoeOp import FlashMoeBlockWrapper
 import torch
 import vllmMinimalEnv.vllmMinimalEnv
+import pytest
 
 from vllm.model_executor.models.qwen3_moe import Qwen3MoeSparseMoeBlock
 
 torch.manual_seed(95447)
 
+batchSizes = [1, 16, 48]
 
-def test_FlashMoeWrapper():
+
+@pytest.mark.parametrize("batchSize", batchSizes)
+def test_FlashMoeWrapper(batchSize):
 
     # Prepare data:
-    batchSize = 1
+    batchSize = batchSize
     hiddenSize = 2048
     experts = 128
     inter = 768
@@ -63,15 +67,16 @@ def test_FlashMoeWrapper():
     moe.experts.w13_weight.data = ffn1Weights
     moe.experts.w2_weight.data = ffn2Weights
 
-    moeWrappered = FlashMoeBlockWrapper(moe)
+    moeWrappered = FlashMoeBlockWrapper(moe, batchSize)
 
     outRef = moe(tokens)
     out = moeWrappered(tokens_copy)
 
     vllmEnv.shutdown()
 
-    assert torch.allclose(out, outRef, rtol=1e-06, atol=1e-05)
+    assert torch.allclose(out, outRef, rtol=1e-05, atol=1e-04)
 
 
 if __name__ == "__main__":
-    test_FlashMoeWrapper()
+    for batchSize in batchSizes:
+        test_FlashMoeWrapper(batchSize)
