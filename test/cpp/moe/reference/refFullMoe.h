@@ -40,15 +40,16 @@ static std::vector<T> refFullMoe(const T* tokens, const T* gateWeights,
         continue;
       }
 
-      // ffn1ExpertWeights layout assumed: [expert][hidden][expertIntermediate]
+      // ffn1ExpertWeights layout assumed:
+      // [expert][2*expertIntermediate][hidden]
       const T* expertFFN1W =
-          ffn1ExpertWeights +
-          size_t(expert) * size_t(hiddenSize) * size_t(expertIntermediateSize);
+          ffn1ExpertWeights + size_t(expert) * size_t(hiddenSize) *
+                                  size_t(2 * expertIntermediateSize);
 
       auto refFFN1Out = test::refExpertFFN1(tokenPtr, expertFFN1W, 1,
                                             hiddenSize, expertIntermediateSize);
 
-      // ffn1ExpertWeights layout assumed: [expert][expertIntermediate][hidden]
+      // ffn1ExpertWeights layout assumed: [expert][hidden][expertIntermediate]
       const T* expertFFN2W =
           ffn2ExpertWeights +
           size_t(expert) * size_t(hiddenSize) * size_t(expertIntermediateSize);

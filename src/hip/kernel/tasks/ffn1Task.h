@@ -25,7 +25,7 @@ __device__ void ExecuteExpertFFN1Task(const MoeTaskDesc& task,
       static_cast<const TType*>(task.tokens) + task.tokenIdx * T_FFN1_TILE::K;
   const TType* thisffn1ExpertWeights =
       static_cast<const TType*>(task.ffn1ExpertWeights) +
-      task.expertIdx * T_FFN1_TILE::K * T_FFN1_TILE::N;
+      task.expertIdx * T_FFN1_TILE::K * 2 * T_FFN1_TILE::N;
 
   TType outRegs[T_FFN1_TILE::THREAD_OUTPUT_SIZE];
 

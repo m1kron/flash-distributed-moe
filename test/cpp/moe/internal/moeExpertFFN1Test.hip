@@ -16,6 +16,9 @@ constexpr int THREADS = 128;
 constexpr int BLOCKS = 304;
 
 constexpr int EXPERT_TILE_SIZE = 256;
+
+constexpr float ABS_ERROR = 1e-4f;
+
 using TExpertGemmTileParams =
     GemmTileParams<EXPERT_INTERMEDIATE_SIZE, HIDDEN_SIZE, 1, EXPERT_TILE_SIZE,
                    32, THREADS, float>;
@@ -100,6 +103,6 @@ TEST(MoeTasksInternalTests, MoeExpertFFN1_basicTest) {
       test::refExpertFFN1(tokens_host.data(), expertWeights_host.data(),
                           TOKENS_NUM, HIDDEN_SIZE, EXPERT_INTERMEDIATE_SIZE);
 
-  CheckAgainstRefBuffer(output_host, refOut);
+  CheckAgainstRefBuffer(output_host, refOut, ABS_ERROR);
 }
 }  // namespace

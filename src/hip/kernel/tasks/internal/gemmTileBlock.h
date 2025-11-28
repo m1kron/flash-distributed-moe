@@ -7,7 +7,8 @@ namespace internal {
 
 // NOTE: GPT5-mini generated code with my minor changes.
 // Device GEMM for single block.
-// A: M x K (row-major), B: K x N (row-major), C: M x N (row-major).
+// A: M x K (row-major), B: N x K (row-major), C: M x N (row-major).
+// Computes C = A * B^T (since B is stored as N x K).
 template <typename GEMM_TILE_PARAMS>
 __device__ void GemmTile_block(
     const typename GEMM_TILE_PARAMS::TType* __restrict__ A,
@@ -36,8 +37,7 @@ __device__ void GemmTile_block(
   for (int i = 0; i < OUT_PER_THREAD; ++i) CTile_thread_regs[i] = 0.0f;
 
   for (int kt = 0; kt < K; kt += TILE_K) {
-    // Cooperative load A tile: sA[row * TILE_K + kLocal] = A[row*K + (kt +
-    // kLocal)]
+    // Cooperative load A tile: sA[row * TILE_K + kLocal] = A[row*K + (kt + kLocal)]
     for (int idx = tid; idx < TILE_M * TILE_K; idx += blockDim.x) {
       const int row = idx / TILE_K;
       const int kLocal = idx % TILE_K;  // 0..TILE_K-1
@@ -45,13 +45,14 @@ __device__ void GemmTile_block(
           A[(BLOCK_START_ROW + row) * K + (kt + kLocal)];
     }
 
-    // Cooperative load B tile: sB[kLocal * N + col] = B[(kt + kLocal) * N +
-    // col]
+    // Cooperative load B tile for B stored as N x K (row-major):
+    // Need B^T[k, n] = B[n, k] -> sB[kLocal, col] = B[(n)*K + (kt + kLocal)]
     for (int idx = tid; idx < TILE_K * TILE_N; idx += blockDim.x) {
       const int kLocal = idx / TILE_N;  // 0..TILE_K-1
-      const int col = idx % TILE_N;
+      const int col = idx % TILE_N;     // 0..TILE_N-1
+      const int nIdx = col + BLOCK_START_COL;  // output column index
       sB[kLocal * TILE_N + col] =
-          B[(kt + kLocal) * N + (col + BLOCK_START_COL)];
+          B[nIdx * K + (kt + kLocal)];
     }
 
     __syncthreads();
@@ -59,7 +60,6 @@ __device__ void GemmTile_block(
     // Multiply-accumulate over local k
 #pragma unroll
     for (int kLocal = 0; kLocal < TILE_K; ++kLocal) {
-      // For each output this thread owns, read A once and B once (per kLocal)
 #pragma unroll
       for (int out = 0; out < OUT_PER_THREAD; ++out) {
         const int linear = baseLinear + out;
