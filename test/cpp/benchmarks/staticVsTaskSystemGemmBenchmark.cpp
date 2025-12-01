@@ -26,7 +26,7 @@ static float run_gpu_benchmark_tasksystem(const float* dA, const float* dB,
   return res;
 }
 
-TEST(GemmBenchmark, StaticVsTaskSystem) {
+TEST(Benchmark, StaticVsTaskSystemGemm) {
   const int M = 2048;
   const int N = 1536;
   const int K = 2048;
