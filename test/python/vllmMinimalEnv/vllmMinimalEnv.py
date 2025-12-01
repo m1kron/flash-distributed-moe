@@ -3,7 +3,7 @@ import os
 os.environ["MASTER_ADDR"] = "localhost"
 os.environ["MASTER_PORT"] = "12355"
 os.environ["VLLM_USE_V1"] = "1"
-os.environ["VLLM_ROCM_USE_AITER"] = "1"
+os.environ["VLLM_ROCM_USE_AITER"] = "0"
 
 from vllm import EngineArgs
 from vllm.model_executor.models.qwen3_moe import Qwen3MoeSparseMoeBlock
@@ -53,7 +53,10 @@ class VllmMinimalEnvMoeExecutionWrapper(torch.nn.Module):
              
     def forward(self, input):
         return self.forwardCallBack(input)
-
+    
+    def resetForward(self):
+        self.forwardCallBack = self._forwardStandard
+             
     def _forwardStandard(self, input):
         with set_forward_context(None, self.vllm_config):
             return self.module(input)
