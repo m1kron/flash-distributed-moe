@@ -22,13 +22,19 @@ def test_pythonBinding():
 
     launcher = flashMoeLauncher.MoeKernelLauncher()
 
-    launcher.create(tokens_num)
+    assert launcher.valid == False
+
+    launcher.create(gate_w, ffn1_w, ffn2_w, tokens_num)
+
+    assert launcher.valid == True
 
     # Call launch; some bindings return hipError code, others None
-    launcher.launch(tokens, gate_w, ffn1_w, ffn2_w, output)
+    launcher.launch(tokens, output)
     torch.cuda.synchronize(device)
 
     assert output.shape == (tokens_num, hidden)
     assert output.dtype == torch.float32
 
     launcher.destroy()
+
+    assert launcher.valid == False

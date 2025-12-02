@@ -31,44 +31,23 @@ namespace py = pybind11;
 
 class MoeKernelLauncherWrapper {
  public:
-  void launch(const at::Tensor& tokens, const at::Tensor& gate_weights,
-              const at::Tensor& ffn1_expert_weights,
-              const at::Tensor& ffn2_expert_weights, const at::Tensor& output) {
+  void launch(const at::Tensor& tokens, const at::Tensor& output) {
     if (!ptr_) throw std::runtime_error("Launcher was destroyed");
+
+    CHECK_TENSOR(tokens);
+    CHECK_TENSOR(output);
 
     auto tokensSize = tokens.sizes()[0];
     auto hiddenSize = tokens.sizes()[1];
-    auto expertsSize = gate_weights.sizes()[0];
-    auto interSize = ffn2_expert_weights.sizes()[2];
-
-    CHECK_TENSOR(tokens);
-    CHECK_TENSOR(gate_weights);
-    CHECK_TENSOR(ffn1_expert_weights);
-    CHECK_TENSOR(ffn2_expert_weights);
-    CHECK_TENSOR(output);
-
-    TORCH_CHECK(gate_weights.sizes()[1] == hiddenSize);
-
-    TORCH_CHECK(ffn1_expert_weights.sizes()[0] == expertsSize);
-    TORCH_CHECK(ffn1_expert_weights.sizes()[1] == 2 * interSize);
-    TORCH_CHECK(ffn1_expert_weights.sizes()[2] == hiddenSize);
-
-    TORCH_CHECK(ffn2_expert_weights.sizes()[0] == expertsSize);
-    TORCH_CHECK(ffn2_expert_weights.sizes()[1] == hiddenSize);
-    TORCH_CHECK(ffn2_expert_weights.sizes()[2] == interSize);
 
     TORCH_CHECK(output.sizes()[0] == tokensSize);
     TORCH_CHECK(output.sizes()[1] == hiddenSize);
 
     const void* t_ptr = tokens.data_ptr();
-    const void* gw_ptr = gate_weights.data_ptr();
-    const void* f1_ptr = ffn1_expert_weights.data_ptr();
-    const void* f2_ptr = ffn2_expert_weights.data_ptr();
     void* out_ptr = const_cast<void*>(output.data_ptr());
     hipStream_t stream = at::cuda::getCurrentCUDAStream();
 
-    HIP_ERROR_CHECK(ptr_->Launch(t_ptr, gw_ptr, f1_ptr, f2_ptr, out_ptr,
-                                 tokensSize, stream));
+    HIP_ERROR_CHECK(ptr_->Launch(t_ptr, out_ptr, tokensSize, stream));
   }
 
   void destroy() {
@@ -79,9 +58,33 @@ class MoeKernelLauncherWrapper {
     }
   }
 
-  void create(int max_tokens) {
+  void create(const at::Tensor& gate_weights,
+              const at::Tensor& ffn1_expert_weights,
+              const at::Tensor& ffn2_expert_weights, int max_tokens) {
+    auto expertsSize = gate_weights.sizes()[0];
+    auto hiddenSize = gate_weights.sizes()[1];
+    auto interSize = ffn2_expert_weights.sizes()[2];
+
+    TORCH_CHECK(ffn1_expert_weights.sizes()[0] == expertsSize);
+    TORCH_CHECK(ffn1_expert_weights.sizes()[1] == 2 * interSize);
+    TORCH_CHECK(ffn1_expert_weights.sizes()[2] == hiddenSize);
+
+    TORCH_CHECK(ffn2_expert_weights.sizes()[0] == expertsSize);
+    TORCH_CHECK(ffn2_expert_weights.sizes()[1] == hiddenSize);
+    TORCH_CHECK(ffn2_expert_weights.sizes()[2] == interSize);
+
+    CHECK_TENSOR(gate_weights);
+    CHECK_TENSOR(ffn1_expert_weights);
+    CHECK_TENSOR(ffn2_expert_weights);
+
     hipStream_t stream = at::cuda::getCurrentCUDAStream();
-    HIP_ERROR_CHECK(CreateLauncher(&ptr_, stream, max_tokens));
+
+    const void* gw_ptr = gate_weights.data_ptr();
+    const void* f1_ptr = ffn1_expert_weights.data_ptr();
+    const void* f2_ptr = ffn2_expert_weights.data_ptr();
+
+    HIP_ERROR_CHECK(
+        CreateLauncher(&ptr_, gw_ptr, f1_ptr, f2_ptr, max_tokens, stream));
   }
 
   bool valid() const { return ptr_ != nullptr; }
@@ -96,9 +99,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   py::class_<MoeKernelLauncherWrapper>(m, "MoeKernelLauncher")
       .def(py::init())
       .def("launch", &MoeKernelLauncherWrapper::launch, py::arg("tokens"),
-           py::arg("gate_weights"), py::arg("ffn1_expert_weights"),
-           py::arg("ffn2_expert_weights"), py::arg("output"))
+           py::arg("output"))
       .def("destroy", &MoeKernelLauncherWrapper::destroy)
-      .def("create", &MoeKernelLauncherWrapper::create, py::arg("max_tokens"))
+      .def("create", &MoeKernelLauncherWrapper::create, py::arg("gate_weights"),
+           py::arg("ffn1_expert_weights"), py::arg("ffn2_expert_weights"),
+           py::arg("max_tokens"))
       .def_property_readonly("valid", &MoeKernelLauncherWrapper::valid);
 }
