@@ -1,8 +1,7 @@
-from flashMoeOp import FlashMoeBlockWrapper
 import torch
 import vllmMinimalEnv.vllmMinimalEnv
 import pytest
-
+from flashMoeOp import FlashMoeBlockWrapper
 from vllm.model_executor.models.qwen3_moe import Qwen3MoeSparseMoeBlock
 
 torch.manual_seed(95447)
