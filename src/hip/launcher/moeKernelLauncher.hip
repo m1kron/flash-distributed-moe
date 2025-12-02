@@ -9,6 +9,9 @@ extern __constant__ int* globalFFN1SyncArray;
 extern __constant__ int* globalChunkReduceSyncArray;
 struct InternalState {
   TaskManagerType taskManagerHost;
+  const void* gateWeights;
+  const void* ffn1ExpertWeights;
+  const void* ffn2ExpertWeights;
   int* ffn1SyncArrayDevice;
   int* chunkReduceSyncArrayDevice;
   void* ffn1Output_device;
@@ -17,10 +20,8 @@ struct InternalState {
 
 template <typename MOE_METADATA>
 hipError_t moeKernelLaunchFunc(InternalState* state, const void* tokens,
-                               const void* gateWeights,
-                               const void* ffn1ExpertWeights,
-                               const void* ffn2ExpertWeights, void* output,
-                               int tokensNum, hipStream_t stream) {
+                               void* output, int tokensNum,
+                               hipStream_t stream) {
   using TMoeDataType = typename MOE_METADATA::MOE_PROBLEM_CONFIG::TDataType;
   dim3 grid(MOE_METADATA::HW_CONFIG::BLOCKS);
   dim3 block(MOE_METADATA::HW_CONFIG::THREADS);
@@ -53,9 +54,9 @@ hipError_t moeKernelLaunchFunc(InternalState* state, const void* tokens,
 
   moeKernel<MOE_METADATA><<<grid, block, 0, stream>>>(
       static_cast<const TMoeDataType*>(tokens),
-      static_cast<const TMoeDataType*>(gateWeights),
-      static_cast<const TMoeDataType*>(ffn1ExpertWeights),
-      static_cast<const TMoeDataType*>(ffn2ExpertWeights),
+      static_cast<const TMoeDataType*>(state->gateWeights),
+      static_cast<const TMoeDataType*>(state->ffn1ExpertWeights),
+      static_cast<const TMoeDataType*>(state->ffn2ExpertWeights),
       static_cast<TMoeDataType*>(state->ffn1Output_device),
       static_cast<TMoeDataType*>(state->ffn2Output_device),
       static_cast<TMoeDataType*>(output), tokensNum);
@@ -64,8 +65,15 @@ hipError_t moeKernelLaunchFunc(InternalState* state, const void* tokens,
 }
 
 ////////////////////////////////////////////////////////////////
-hipError_t MoeKernelLauncher::Init(hipStream_t stream, int maxTokens) {
+hipError_t MoeKernelLauncher::Init(const void* gateWeights,
+                                   const void* ffn1ExpertWeights,
+                                   const void* ffn2ExpertWeights, int maxTokens,
+                                   hipStream_t stream) {
   m_internalState = new InternalState();
+
+  m_internalState->gateWeights = gateWeights;
+  m_internalState->ffn1ExpertWeights = ffn1ExpertWeights;
+  m_internalState->ffn2ExpertWeights = ffn2ExpertWeights;
 
   // TODO: Allocate all mem using as a single mem block.
 
@@ -130,15 +138,10 @@ hipError_t MoeKernelLauncher::Deinit(hipStream_t stream) {
 }
 
 ////////////////////////////////////////////////////////////////
-hipError_t MoeKernelLauncher::Launch(const void* tokens,
-                                     const void* gateWeights,
-                                     const void* ffn1ExpertWeights,
-                                     const void* ffn2ExpertWeights,
-                                     void* output, int tokensNum,
-                                     hipStream_t stream) {
+hipError_t MoeKernelLauncher::Launch(const void* tokens, void* output,
+                                     int tokensNum, hipStream_t stream) {
   HIP_ERROR_CHECK(moeKernelLaunchFunc<moe::MoeImplMetadata>(
-      m_internalState, tokens, gateWeights, ffn1ExpertWeights,
-      ffn2ExpertWeights, output, tokensNum, stream));
+      m_internalState, tokens, output, tokensNum, stream));
   return hipSuccess;
 }
 

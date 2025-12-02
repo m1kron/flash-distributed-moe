@@ -54,8 +54,6 @@ TEST(MoeTests, basic) {
   float* finalOutput_device = nullptr;
 
   hipStream_t stream = 0;
-  moe::IMoeKernelLauncher* launcher = nullptr;
-  HIP_ERROR_ASSERT(CreateLauncher(&launcher, stream, 2 * TOKENS_NUM));
 
   HIP_ERROR_ASSERT(hipMalloc(&tokens_device, TOKENS_SIZE * sizeof(float)));
   HIP_ERROR_ASSERT(
@@ -80,9 +78,13 @@ TEST(MoeTests, basic) {
       expertFFN2Weights_device, expertFFN2Weights_host.data(),
       EXPERTS_FNN2_WEIGHTS_SIZE * sizeof(float), hipMemcpyHostToDevice));
 
-  HIP_ERROR_ASSERT(launcher->Launch(
-      tokens_device, gateWeights_device, expertFFN1Weights_device,
-      expertFFN2Weights_device, finalOutput_device, TOKENS_NUM, stream));
+  moe::IMoeKernelLauncher* launcher = nullptr;
+  HIP_ERROR_ASSERT(
+      CreateLauncher(&launcher, gateWeights_device, expertFFN1Weights_device,
+                     expertFFN2Weights_device, 2 * TOKENS_NUM, stream));
+
+  HIP_ERROR_ASSERT(
+      launcher->Launch(tokens_device, finalOutput_device, TOKENS_NUM, stream));
 
   HIP_ERROR_ASSERT(hipDeviceSynchronize())
   HIP_ERROR_ASSERT(hipGetLastError());

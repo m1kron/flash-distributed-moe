@@ -12,9 +12,13 @@ IMoeKernelLauncher::~IMoeKernelLauncher() {}
 
 ////////////////////////////////////////////////////////////////////
 extern "C" hipError_t CreateLauncher(moe::IMoeKernelLauncher** launcher,
-                                     hipStream_t stream, int maxTokens) {
+                                     const void* gateWeights,
+                                     const void* ffn1ExpertWeights,
+                                     const void* ffn2ExpertWeights,
+                                     int maxTokens, hipStream_t stream) {
   moe::MoeKernelLauncher* _launcher = new moe::MoeKernelLauncher();
-  HIP_ERROR_CHECK(_launcher->Init(stream, maxTokens));
+  HIP_ERROR_CHECK(_launcher->Init(gateWeights, ffn1ExpertWeights,
+                                  ffn2ExpertWeights, maxTokens, stream));
   *launcher = _launcher;
   return hipSuccess;
 }

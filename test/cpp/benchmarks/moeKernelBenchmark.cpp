@@ -17,11 +17,8 @@ constexpr int REDUCTION_TILE_SIZE = 512;
 constexpr int REDUCTION_CHUNKS_PER_TOKEN = (HIDDEN_SIZE / REDUCTION_TILE_SIZE);
 
 hipError_t run(moe::IMoeKernelLauncher* launcher, const void* tokens,
-               const void* gateWeights, const void* ffn1ExpertWeights,
-               const void* ffn2ExpertWeights, void* output, int tokensNum,
-               hipStream_t stream) {
-  return launcher->Launch(tokens, gateWeights, ffn1ExpertWeights,
-                          ffn2ExpertWeights, output, tokensNum, stream);
+               void* output, int tokensNum, hipStream_t stream) {
+  return launcher->Launch(tokens, output, tokensNum, stream);
 }
 
 void PerformBenchmark(int numTokens) {
@@ -43,8 +40,6 @@ void PerformBenchmark(int numTokens) {
   float* finalOutput_device = nullptr;
 
   hipStream_t stream = 0;
-  moe::IMoeKernelLauncher* launcher = nullptr;
-  HIP_ERROR_ASSERT(CreateLauncher(&launcher, stream, numTokens));
 
   HIP_ERROR_ASSERT(hipMalloc(&tokens_device, numTokens * sizeof(float)));
   HIP_ERROR_ASSERT(
@@ -53,16 +48,20 @@ void PerformBenchmark(int numTokens) {
                              EXPERTS_FNN1_WEIGHTS_SIZE * sizeof(float)));
   HIP_ERROR_ASSERT(hipMalloc(&expertFFN2Weights_device,
                              EXPERTS_FNN2_WEIGHTS_SIZE * sizeof(float)));
+  moe::IMoeKernelLauncher* launcher = nullptr;
+  HIP_ERROR_ASSERT(CreateLauncher(&launcher, gateWeights_device,
+                                  expertFFN1Weights_device,
+                                  expertFFN2Weights_device, numTokens, stream));
+
   HIP_ERROR_ASSERT(
       hipMalloc(&finalOutput_device, FINAL_OUTPUT_SIZE * sizeof(float)));
 
   HIP_ERROR_ASSERT(hipMemcpy(tokens_device, tokens_host.data(),
                              numTokens * sizeof(float), hipMemcpyHostToDevice));
 
-  const float avg_ms = test::bench::Benchmark(
-      10, 10, run, launcher, tokens_device, gateWeights_device,
-      expertFFN1Weights_device, expertFFN2Weights_device, finalOutput_device,
-      numTokens, stream);
+  const float avg_ms =
+      test::bench::Benchmark(10, 10, run, launcher, tokens_device,
+                             finalOutput_device, numTokens, stream);
 
   HIP_ERROR_ASSERT(hipDeviceSynchronize())
   HIP_ERROR_ASSERT(hipGetLastError());

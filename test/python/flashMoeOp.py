@@ -10,7 +10,14 @@ class FlashMoeBlockWrapper(torch.nn.Module):
         super().__init__()
         self.qwen3MoeSparseMoeBlockModule = qwen3MoeSparseMoeBlockModule
         self.launcher = flashMoeLauncher.MoeKernelLauncher()
-        self.launcher.create(maxTokens)
+
+        gateWeights = self.qwen3MoeSparseMoeBlockModule.gate.weight
+        ffn1ExpertWeights = self.qwen3MoeSparseMoeBlockModule.experts.w13_weight
+        ffn2ExpertWeights = self.qwen3MoeSparseMoeBlockModule.experts.w2_weight
+
+        self.launcher.create(
+            gateWeights, ffn1ExpertWeights, ffn2ExpertWeights, maxTokens
+        )
         self.maxTokens = maxTokens
 
     def __del__(self):
@@ -20,13 +27,9 @@ class FlashMoeBlockWrapper(torch.nn.Module):
         hidden_dim = hidden_states.shape[-1]
         if hidden_dim > self.maxTokens:
             tokens = hidden_states
-            gateWeights = self.qwen3MoeSparseMoeBlockModule.gate.weight
-            ffn1ExpertWeights = self.qwen3MoeSparseMoeBlockModule.experts.w13_weight
-            ffn2ExpertWeights = self.qwen3MoeSparseMoeBlockModule.experts.w2_weight
 
-            self.launcher.launch(
-                tokens, gateWeights, ffn1ExpertWeights, ffn2ExpertWeights, tokens
-            )
+            # Inplace calc -> output_mem = input_mem
+            self.launcher.launch(tokens, tokens)
 
             return tokens
         else:
