@@ -1,0 +1,12 @@
+name: Flash MOE CI
+run-name: Run All Tests
+on: [push, workflow_dispatch]
+
+jobs:
+  Run-all-tests-job-rocm6-2-pytorch2-6:
+    uses: makodevai/CI_setup_test_project/.github/workflows/build-docker-and-run-script-rw.yml@main
+    with:
+      docker-image-name: ci_image_rocm_6_4_vllm_0_10
+      script-path: ./scripts/buildAndRun.sh
+      registry-port: 5001
+      run-mi250-jobs: false
