@@ -86,4 +86,5 @@ void PerformBenchmark(int numTokens) {
 
 DECLARE_BENCHMARK(1)
 DECLARE_BENCHMARK(16)
+DECLARE_BENCHMARK(32)
 }  // namespace
