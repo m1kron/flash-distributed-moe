@@ -6,14 +6,13 @@
 
 static constexpr uint32_t SEED = 7907;
 
-#define HIP_ERROR_ASSERT(condition)                                    \
-  {                                                                    \
-    const hipError_t error = condition;                                \
-    if (error != hipSuccess) {                                         \
-      std::cerr << "HIP error: " << hipGetErrorString(error) << " at " \
-                << __FILE__ << ":" << __LINE__ << std::endl;           \
-      ASSERT_EQ(error, hipSuccess) << " for " #condition;              \
-    }                                                                  \
+#define HIP_ERROR_ASSERT(condition...)                        \
+  {                                                           \
+    const hipError_t error = (condition);                     \
+    if (error != hipSuccess) {                                \
+      std::cerr << "HIP error: " << hipGetErrorString(error); \
+      ASSERT_EQ(error, hipSuccess) << " for " #condition;     \
+    }                                                         \
   }
 
 // Checks if all values in buffer are equal to value.
