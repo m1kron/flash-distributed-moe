@@ -79,12 +79,9 @@ void PerformBenchmark(int numTokens) {
             << avg_ms << " ms." << std::endl;
 }
 
-#define DECLARE_BENCHMARK(tokenNum)                    \
-  TEST(Benchmark, MoeBenchmark_TokensNum_##tokenNum) { \
-    PerformBenchmark(tokenNum);                        \
-  }
-
-DECLARE_BENCHMARK(1)
-DECLARE_BENCHMARK(16)
-DECLARE_BENCHMARK(32)
+TEST(Benchmark, FlashMoeSingleGPU) {
+  PerformBenchmark(1);
+  PerformBenchmark(16);
+  PerformBenchmark(32);
+}
 }  // namespace

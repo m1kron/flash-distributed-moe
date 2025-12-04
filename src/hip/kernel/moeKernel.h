@@ -39,21 +39,20 @@ constexpr T max(T a, T b) {
 
 // Main MOE kernel.
 template <typename MOE_METADATA>
-__global__ void moeKernel(const typename MOE_METADATA::MOE_PROBLEM_CONFIG::
-                              TDataType* __restrict__ tokens,
-                          const typename MOE_METADATA::MOE_PROBLEM_CONFIG::
-                              TDataType* __restrict__ gateWeights,
-                          const typename MOE_METADATA::MOE_PROBLEM_CONFIG::
-                              TDataType* __restrict__ ffn1ExpertWeights,
-                          const typename MOE_METADATA::MOE_PROBLEM_CONFIG::
-                              TDataType* __restrict__ ffn2ExpertWeights,
-                          typename MOE_METADATA::MOE_PROBLEM_CONFIG::
-                              TDataType* __restrict__ ffn1Output,
-                          typename MOE_METADATA::MOE_PROBLEM_CONFIG::
-                              TDataType* __restrict__ ffn2Output,
-                          typename MOE_METADATA::MOE_PROBLEM_CONFIG::
-                              TDataType* __restrict__ finalOutput,
-                          int tokensNum) {
+__global__ void moeKernel(
+    const typename MOE_METADATA::MOE_PROBLEM_CONFIG::TDataType* tokens,
+    const typename MOE_METADATA::MOE_PROBLEM_CONFIG::
+        TDataType* __restrict__ gateWeights,
+    const typename MOE_METADATA::MOE_PROBLEM_CONFIG::
+        TDataType* __restrict__ ffn1ExpertWeights,
+    const typename MOE_METADATA::MOE_PROBLEM_CONFIG::
+        TDataType* __restrict__ ffn2ExpertWeights,
+    typename MOE_METADATA::MOE_PROBLEM_CONFIG::
+        TDataType* __restrict__ ffn1Output,
+    typename MOE_METADATA::MOE_PROBLEM_CONFIG::
+        TDataType* __restrict__ ffn2Output,
+    typename MOE_METADATA::MOE_PROBLEM_CONFIG::TDataType* finalOutput,
+    int tokensNum) {
   constexpr int SHARED_MEM_SIZE_BYTES = max(
       MOE_METADATA::TILES_CONFIG::GATE_TILE_METADATA::SHARED_MEM_NEEDES_BYTES,
       max(MOE_METADATA::TILES_CONFIG::FFN1_TILE_METADATA::

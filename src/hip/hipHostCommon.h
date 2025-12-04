@@ -1,15 +1,27 @@
 #pragma once
 
+#include <assert.h>
 #include <hip/hip_runtime.h>
+#include <string.h>
 
-#include <iostream>
+#define __FILENAME__ \
+  (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
 
-#define HIP_ERROR_CHECK(condition)                                        \
-  {                                                                       \
-    const hipError_t error = condition;                                   \
-    if (error != hipSuccess) {                                            \
-      std::cerr << "An error encountered: \"" << hipGetErrorString(error) \
-                << "\" at " << __FILE__ << ':' << __LINE__ << std::endl;  \
-      return error;                                                       \
-    }                                                                     \
+#define HIP_ERROR_CHECK(condition)                                   \
+  {                                                                  \
+    const hipError_t error = condition;                              \
+    if (error != hipSuccess) {                                       \
+      printf("[MOE HIP ERROR: %s:%i]: %s\n", __FILENAME__, __LINE__, \
+             hipGetErrorString(error));                              \
+      return error;                                                  \
+    }                                                                \
   }
+
+#ifdef NDEBUG
+#define MOE_LOG(text, ...) (void)0
+#else
+#define MOE_LOG(STR, ARGS...) \
+  printf("[MOE LOG: %s:%i]: " STR "\n", __FILENAME__, __LINE__, ##ARGS);
+#endif
+
+#define MOE_ASSERT(CONDITION) assert(CONDITION);

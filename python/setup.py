@@ -30,7 +30,7 @@ setup(
             include_dirs=[str(project_root / "include")],
             libraries=[flash_moe_lib_name],
             library_dirs=[flash_moe_lib_dir],
-            extra_compile_args={"cxx": ["-O3", "-std=c++17"], "nvcc": [], "hipcc": []},
+            extra_compile_args={"cxx": ["-O3", "-std=c++17", "-fvisibility=hidden"], "nvcc": [], "hipcc": []},
             define_macros=[("TORCH_EXTENSION_NAME", "flashMoeLauncher")],
             extra_link_args=[
                 f"-Wl,-rpath,{out_dir}",  # absolute path fallback
