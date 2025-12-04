@@ -99,24 +99,22 @@ void PerformBenchmark() {
   CheckAgainstRefBuffer(host_c, ref, ABS_ERROR);
 
   std::cout << "MOE-like gemm [" << M << "x" << N << "x" << K
-            << "], with params: <THREADS: " << THREADS << ", N_TILE: " << N_TILE
-            << ", K_TILE: " << K_TILE << "> kernel avg time is " << avg_ms
+            << "], with params: <N_TILE: " << N_TILE << ", K_TILE: " << K_TILE
+            << ", THREADS: " << THREADS << "> kernel avg time is " << avg_ms
             << " ms." << std::endl;
 }
 
-#define DECLARE_BENCHMARK(M, N, K, N_TILE, K_TILE, THREADS)                             \
-  TEST(                                                                                 \
-      Benchmark,                                                                        \
-      MoeLikeGemm_##M##x##N##K##_NTILE_##N_TILE##_KTILE_##K_TILE##_THREADS_##THREADS) { \
-    PerformBenchmark<M, N, K, N_TILE, K_TILE, THREADS>();                               \
-  }
+#define DECLARE_BENCHMARK(M, N, K, N_TILE, K_TILE, THREADS) \
+  PerformBenchmark<M, N, K, N_TILE, K_TILE, THREADS>();
 
-DECLARE_BENCHMARK(8, 768, 2048, 256, 32, 128);
-DECLARE_BENCHMARK(8, 2048, 768, 256, 32, 128);
+TEST(Benchmark, MoeLikeGemm) {
+  PerformBenchmark<8, 768, 2048, 256, 32, 128>();
+  PerformBenchmark<8, 2048, 768, 256, 32, 128>();
 
-DECLARE_BENCHMARK(128, 768, 2048, 256, 32, 128);
-DECLARE_BENCHMARK(128, 2048, 768, 256, 32, 128);
+  PerformBenchmark<128, 768, 2048, 256, 32, 128>();
+  PerformBenchmark<128, 2048, 768, 256, 32, 128>();
 
-DECLARE_BENCHMARK(256, 768, 2048, 256, 32, 128);
-DECLARE_BENCHMARK(256, 2048, 768, 256, 32, 128);
+  PerformBenchmark<256, 768, 2048, 256, 32, 128>();
+  PerformBenchmark<256, 2048, 768, 256, 32, 128>();
+}
 }  // namespace
