@@ -9,33 +9,37 @@ namespace {
 static constexpr float ABS_ERROR = 1e-3f;
 
 template <typename TGEMM_TILE>
-__global__ void refHipKernel(const float* __restrict__ tokens,
-                             const float* __restrict__ weights, float* output) {
+__global__ void batchedGemvKernel(const float* __restrict__ A,
+                                  const float* __restrict__ B,
+                                  float* __restrict__ output) {
   __shared__ char sharedMemPool[TGEMM_TILE::SHARED_MEM_NEEDES_BYTES];
 
   constexpr int N_CHUNKS = TGEMM_TILE::N / TGEMM_TILE::TILE_N;
 
-  const int tokenIdx = blockIdx.x / N_CHUNKS;
+  const int thisBlockGemvIdx = blockIdx.x / N_CHUNKS;
 
-  const float* thisBlockTokenPtr = tokens + tokenIdx * TGEMM_TILE::K;
+  const float* thisBlockAPtr = A + thisBlockGemvIdx * TGEMM_TILE::K;
+  const float* thisBlockBPtr =
+      B + thisBlockGemvIdx * TGEMM_TILE::N * TGEMM_TILE::K;
 
   const int thisBlockTileIdx = blockIdx.x % N_CHUNKS;
 
   typename TGEMM_TILE::TType out_regs[TGEMM_TILE::THREAD_OUTPUT_SIZE];
 
   moe::tasks::internal::GemmTile_block<TGEMM_TILE>(
-      thisBlockTokenPtr, weights, out_regs, 0, thisBlockTileIdx, sharedMemPool);
+      thisBlockAPtr, thisBlockBPtr, out_regs, 0, thisBlockTileIdx,
+      sharedMemPool);
 
-  float* thisBlockOutputPtr = output + tokenIdx * TGEMM_TILE::N;
+  float* thisBlockOutputPtr = output + thisBlockGemvIdx * TGEMM_TILE::N;
   moe::tasks::internal::WriteGemmTileToGlobalMem_block<TGEMM_TILE>(
       out_regs, thisBlockOutputPtr, 0, thisBlockTileIdx);
 }
 
 template <int M, int N, int K, int N_TILE, int K_TILE, int THREADS>
-hipError_t gemmAsManyGemv(const float* A, const float* B, float* C) {
+hipError_t batchedGemv(const float* A, const float* B, float* C) {
   // WARNING:
   // A [M,K]
-  // B [N,K] (-> transposed from standard gemm)
+  // B [M*N,K] (-> transposed from standard gemm)
   // C [M,N]
   // NOTE: We process gemm as many gemv, which simiulates moe case.
   constexpr int M_TILE = 1;
@@ -49,15 +53,34 @@ hipError_t gemmAsManyGemv(const float* A, const float* B, float* C) {
   dim3 grid(TILES_TO_PROCESS);
   dim3 block(TGemmTileParams::THREADS);
 
-  refHipKernel<TGemmTileParams><<<grid, block, 0, 0>>>(A, B, C);
+  batchedGemvKernel<TGemmTileParams><<<grid, block, 0, 0>>>(A, B, C);
 
   return hipSuccess;
 }
 
+template <typename T>
+std::vector<T> refBatchedGemv(const T* A, const T* B, int M, int N, int K) {
+  std::vector<T> out;
+
+  for (int gemvIdx = 0; gemvIdx < M; ++gemvIdx) {
+    const T* vec = A + gemvIdx * K;
+    const T* mat = B + gemvIdx * N * K;
+    auto outRow = test::refGemm(vec, mat, 1, N, K);
+    out.insert(out.end(), outRow.begin(), outRow.end());
+  }
+
+  return out;
+}
+
 template <int M, int N, int K, int N_TILE, int K_TILE, int THREADS>
 void PerformBenchmark() {
+  // Batched gemv: Matrix A keeps M vectors, represented as single matrix of
+  // size, matrix B keeps M Matrices, each of size K*N as a single matrix of
+  // size MxNxK. Result is again stored as single matrix of size MxN. This kind
+  // of simulates moe, where each token is passed to different expert weights.
+  // NOTE that for matices A and B, last dim is always K.
   constexpr int a_size = M * K;
-  constexpr int b_size = K * N;
+  constexpr int b_size = M * N * K;
   constexpr int c_size = M * N;
 
   std::vector<float> host_a = RandomVector<float>(a_size);
@@ -78,10 +101,10 @@ void PerformBenchmark() {
   HIP_ERROR_ASSERT(hipMemset(d_c, 0, c_size * sizeof(float)));
 
   const float avg_ms = test::bench::Benchmark(
-      10, 10, gemmAsManyGemv<M, N, K, N_TILE, K_TILE, THREADS>, d_a, d_b, d_c);
+      10, 10, batchedGemv<M, N, K, N_TILE, K_TILE, THREADS>, d_a, d_b, d_c);
 
   HIP_ERROR_ASSERT(
-      gemmAsManyGemv<M, N, K, N_TILE, K_TILE, THREADS>(d_a, d_b, d_c));
+      batchedGemv<M, N, K, N_TILE, K_TILE, THREADS>(d_a, d_b, d_c));
 
   HIP_ERROR_ASSERT(hipDeviceSynchronize())
   HIP_ERROR_ASSERT(hipGetLastError());
@@ -94,7 +117,7 @@ void PerformBenchmark() {
   HIP_ERROR_ASSERT(hipFree(d_b));
   HIP_ERROR_ASSERT(hipFree(d_c));
 
-  auto ref = test::refGemm(host_a.data(), host_b.data(), M, N, K);
+  auto ref = refBatchedGemv(host_a.data(), host_b.data(), M, N, K);
 
   CheckAgainstRefBuffer(host_c, ref, ABS_ERROR);
 
@@ -113,8 +136,5 @@ TEST(Benchmark, MoeLikeGemm) {
 
   PerformBenchmark<128, 768, 2048, 256, 32, 128>();
   PerformBenchmark<128, 2048, 768, 256, 32, 128>();
-
-  PerformBenchmark<256, 768, 2048, 256, 32, 128>();
-  PerformBenchmark<256, 2048, 768, 256, 32, 128>();
 }
 }  // namespace
