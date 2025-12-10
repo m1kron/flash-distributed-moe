@@ -53,24 +53,29 @@ int main(int argc, char** argv) {
   }
 
   rocshmem_init();
-  int npes = rocshmem_n_pes();
+  const int npes = rocshmem_n_pes();
   const int dst_pe = (rank + 1) % npes;
   const int prev_pe = (rank - 1 + npes) % npes;
-  uint64_t* message = (uint64_t*)rocshmem_malloc(nelem * sizeof(uint64_t));
-  uint64_t* data = (uint64_t*)rocshmem_malloc(nelem * sizeof(uint64_t));
-  uint64_t* sig_addr = (uint64_t*)rocshmem_malloc(sizeof(uint64_t));
-  if (NULL == data || NULL == message || NULL == sig_addr) {
-    std::cout << "Error allocating memory from symmetric heap" << std::endl;
-    std::cout << "data: " << data << ", message: " << message
-              << ", size: " << sizeof(uint64_t) * nelem
-              << ", sig_addr: " << sig_addr << std::endl;
-    rocshmem_global_exit(1);
-  }
-
+  uint64_t* message_host = (uint64_t*)malloc(nelem * sizeof(uint64_t));
   constexpr int msgVal = 12345;
 
   for (int i = 0; i < nelem; i++) {
-    message[i] = msgVal;
+    message_host[i] = msgVal;
+  }
+
+  uint64_t* message_device;
+  CHECK_HIP(hipMalloc(&message_device, nelem * sizeof(uint64_t)));
+  CHECK_HIP(hipMemcpy(message_device, message_host, nelem * sizeof(uint64_t),
+                      hipMemcpyHostToDevice));
+
+  uint64_t* data = (uint64_t*)rocshmem_malloc(nelem * sizeof(uint64_t));
+  uint64_t* sig_addr = (uint64_t*)rocshmem_malloc(sizeof(uint64_t));
+  if (NULL == data || NULL == message_device || NULL == sig_addr) {
+    std::cout << "Error allocating memory from symmetric heap" << std::endl;
+    std::cout << "data: " << data << ", message: " << message_device
+              << ", size: " << sizeof(uint64_t) * nelem
+              << ", sig_addr: " << sig_addr << std::endl;
+    rocshmem_global_exit(1);
   }
 
   CHECK_HIP(hipMemset(data, 0, (nelem * sizeof(uint64_t))));
@@ -79,7 +84,7 @@ int main(int argc, char** argv) {
 
   int threadsPerBlock = MAX_ELEM;
   sendMsgToPeerKernel<<<dim3(1), dim3(threadsPerBlock), 0, 0>>>(
-      data, message, nelem, sig_addr, rank, dst_pe);
+      data, message_device, nelem, sig_addr, rank, dst_pe);
   rocshmem_barrier_all();
   CHECK_HIP(hipDeviceSynchronize());
 
@@ -94,8 +99,9 @@ int main(int argc, char** argv) {
   }
   printf("[%d] Test %s \t %s\n", rank, argv[0], pass ? "[PASS]" : "[FAIL]");
 
+  free(message_host);
+  CHECK_HIP(hipFree(message_device));
   rocshmem_free(data);
-  rocshmem_free(message);
   rocshmem_finalize();
   return 0;
 }
