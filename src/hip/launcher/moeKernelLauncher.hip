@@ -20,13 +20,23 @@ struct InternalState {
 };
 
 template <typename MOE_METADATA>
-hipError_t moeKernelLaunchFunc(InternalState* state, const void* tokens,
-                               void* output, int tokensNum,
-                               hipStream_t stream) {
-  using TMoeDataType = typename MOE_METADATA::MOE_PROBLEM_CONFIG::TDataType;
-  dim3 grid(MOE_METADATA::HW_CONFIG::BLOCKS * state->maxBlocksPerSM);
-  dim3 block(MOE_METADATA::HW_CONFIG::THREADS);
+int GetExpectedNumOfTasksForOneToken() {
+  const int ffn1TasksNum =
+      MOE_METADATA::MOE_PROBLEM_CONFIG::TOPK *
+      (MOE_METADATA::MOE_PROBLEM_CONFIG::EXPERT_INTERMEDIATE_SIZE /
+       MOE_METADATA::TILES_CONFIG::FFN1_TILE_METADATA::TILE_N);
+  const int ffn2TasksNum =
+      MOE_METADATA::MOE_PROBLEM_CONFIG::TOPK *
+      (MOE_METADATA::MOE_PROBLEM_CONFIG::HIDDEN_SIZE /
+       MOE_METADATA::TILES_CONFIG::FFN2_TILE_METADATA::TILE_N);
+  const int reductionTasksNum =
+      MOE_METADATA::TILES_CONFIG::REDUCTION_CHUNKS_PER_TOKEN;
 
+  return ffn1TasksNum + ffn2TasksNum + reductionTasksNum;
+}
+
+template <typename MOE_METADATA>
+int GetExpectedNumOfTasks(int tokensNum) {
   const int ffn1TasksNum =
       tokensNum * MOE_METADATA::MOE_PROBLEM_CONFIG::TOPK *
       (MOE_METADATA::MOE_PROBLEM_CONFIG::EXPERT_INTERMEDIATE_SIZE /
@@ -38,7 +48,19 @@ hipError_t moeKernelLaunchFunc(InternalState* state, const void* tokens,
   const int reductionTasksNum =
       tokensNum * MOE_METADATA::TILES_CONFIG::REDUCTION_CHUNKS_PER_TOKEN;
 
-  const int expectedNumTasks = ffn1TasksNum + ffn2TasksNum + reductionTasksNum;
+  return GetExpectedNumOfTasksForOneToken<MOE_METADATA>() * tokensNum;
+}
+
+template <typename MOE_METADATA>
+hipError_t moeKernelLaunchFunc(InternalState* state, const void* tokens,
+                               void* output, int tokensNum,
+                               hipStream_t stream) {
+  using TMoeDataType = typename MOE_METADATA::MOE_PROBLEM_CONFIG::TDataType;
+  dim3 grid(MOE_METADATA::HW_CONFIG::BLOCKS * state->maxBlocksPerSM);
+  dim3 block(MOE_METADATA::HW_CONFIG::THREADS);
+
+  const int expectedNumTasks = GetExpectedNumOfTasks<MOE_METADATA>(tokensNum);
+
   HIP_ERROR_CHECK(
       state->taskManagerHost.PrepareForNextLaunch(stream, expectedNumTasks));
 
@@ -75,6 +97,32 @@ hipError_t MoeKernelLauncher::Init(const void* gateWeights,
   m_internalState->gateWeights = gateWeights;
   m_internalState->ffn1ExpertWeights = ffn1ExpertWeights;
   m_internalState->ffn2ExpertWeights = ffn2ExpertWeights;
+
+  HIP_ERROR_CHECK(hipOccupancyMaxActiveBlocksPerMultiprocessor(
+      &m_internalState->maxBlocksPerSM, moeKernel<moe::MoeImplMetadata>,
+      moe::MoeImplMetadata::HW_CONFIG::THREADS, 0));
+  MOE_LOG("Calculated max block per sm: %i", m_internalState->maxBlocksPerSM);
+
+  // Task + tickets
+  const int expectedMaxNumTasks =
+      GetExpectedNumOfTasks<moe::MoeImplMetadata>(maxTokens) +
+      m_internalState->maxBlocksPerSM * moe::MoeImplMetadata::HW_CONFIG::BLOCKS;
+
+  if (expectedMaxNumTasks >
+      m_internalState->taskManagerHost.GetTaskQueueSize()) {
+    const int maxPossibleTokens =
+        (m_internalState->taskManagerHost.GetTaskQueueSize() -
+         m_internalState->maxBlocksPerSM *
+             moe::MoeImplMetadata::HW_CONFIG::BLOCKS) /
+        GetExpectedNumOfTasksForOneToken<moe::MoeImplMetadata>();
+
+    MOE_ERROR_LOG(
+        "Task queue size is not enough for max tokens: %i, current "
+        "configuration will handle %i tokens.",
+        maxTokens, maxPossibleTokens);
+
+    return hipErrorUnknown;
+  }
 
   // TODO: Allocate all mem using as a single mem block.
 
@@ -117,12 +165,6 @@ hipError_t MoeKernelLauncher::Init(const void* gateWeights,
   HIP_ERROR_CHECK(hipMemcpyToSymbolAsync(
       HIP_SYMBOL(globalFFN1SyncArray), &m_internalState->ffn1SyncArrayDevice,
       sizeof(int*), 0, hipMemcpyHostToDevice, stream));
-
-  HIP_ERROR_CHECK(hipOccupancyMaxActiveBlocksPerMultiprocessor(
-      &m_internalState->maxBlocksPerSM, moeKernel<moe::MoeImplMetadata>,
-      moe::MoeImplMetadata::HW_CONFIG::THREADS, 0));
-
-  MOE_LOG("Calculated max block per sm: %i", m_internalState->maxBlocksPerSM);
 
   HIP_ERROR_CHECK(hipStreamSynchronize(stream));
 

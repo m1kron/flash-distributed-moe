@@ -81,7 +81,7 @@ TEST(MoeTests, basic) {
   moe::IMoeKernelLauncher* launcher = nullptr;
   HIP_ERROR_ASSERT(
       CreateLauncher(&launcher, gateWeights_device, expertFFN1Weights_device,
-                     expertFFN2Weights_device, 2 * TOKENS_NUM, stream));
+                     expertFFN2Weights_device, TOKENS_NUM + 2, stream));
 
   HIP_ERROR_ASSERT(
       launcher->Launch(tokens_device, finalOutput_device, TOKENS_NUM, stream));

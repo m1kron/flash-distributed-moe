@@ -17,8 +17,11 @@
     }                                                                \
   }
 
+#define MOE_ERROR_LOG(STR, ARGS...) \
+  printf("[MOE ERROR: %s:%i]: " STR "\n", __FILENAME__, __LINE__, ##ARGS)
+
 #ifdef NDEBUG
-#define MOE_LOG(text, ...) (void)0
+#define MOE_LOG(STR, ...) (void)0
 #else
 #define MOE_LOG(STR, ARGS...) \
   printf("[MOE LOG: %s:%i]: " STR "\n", __FILENAME__, __LINE__, ##ARGS);
