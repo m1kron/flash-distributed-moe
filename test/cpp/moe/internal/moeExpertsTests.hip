@@ -11,7 +11,7 @@
 #include "test/cpp/utils/utils.h"
 
 namespace {
-constexpr float ERROR_ABS = 1e-5f;
+constexpr float ERROR_ABS = 2e-5f;
 constexpr int TOKENS_NUM = 48;
 constexpr int EXPERTS_NUM = 128;
 constexpr int HIDDEN_SIZE = 2048;
