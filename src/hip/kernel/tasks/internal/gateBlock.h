@@ -16,6 +16,10 @@ __device__ void gate_block(
     int tokenIdx, typename T_GATE_GEMM_TILE::TType** outTopkVals_shared,
     int** outTopkIdx_shared, void* sharedMemPool) {
   using TType = typename T_GATE_GEMM_TILE::TType;
+  static_assert(
+      T_GATE_GEMM_TILE::THREAD_OUTPUT_SIZE == 1,
+      "Gemm tile for gate must have output size 1 per thread(softmax + topk).");
+
   TType out_regs[T_GATE_GEMM_TILE::THREAD_OUTPUT_SIZE];
 
   moe::tasks::internal::GemmTile_block<T_GATE_GEMM_TILE>(
