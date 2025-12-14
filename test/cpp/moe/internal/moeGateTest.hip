@@ -1,22 +1,26 @@
 #include <hip/hip_runtime.h>
 
+#include "src/hip/common/metadata.h"
 #include "src/hip/kernel/tasks/internal/gateBlock.h"
 #include "test/cpp/moe/reference/refMoeGate.h"
 #include "test/cpp/utils/utils.h"
 
 namespace {
 constexpr int M_SIZE = 48;
-constexpr int N_SIZE = 128;
-constexpr int K_SIZE = 2048;
-constexpr int TOPK = 8;
-constexpr int THREADS = 128;
-constexpr int BLOCKS = 304;
+constexpr int N_SIZE = moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::EXPERTS_NUM;
+constexpr int K_SIZE = moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::HIDDEN_SIZE;
+constexpr int TOPK = moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::TOPK;
+constexpr int THREADS = moe::MoeImplMetadata::HW_CONFIG::THREADS;
+constexpr int BLOCKS = moe::MoeImplMetadata::HW_CONFIG::BLOCKS;
+
+using T_GATE_TILE_METADATA =
+    moe::MoeImplMetadata::TILES_CONFIG::GATE_TILE_METADATA;
 
 template <typename TGEMM_TILE>
-__global__ void refHipKernel(const float* __restrict__ tokens,
-                             const float* __restrict__ gateWeights,
-                             float* __restrict__ topkVals,
-                             int* __restrict__ topIdx, int M_SIZE) {
+__global__ void moeGateKernel(const float* __restrict__ tokens,
+                              const float* __restrict__ gateWeights,
+                              float* __restrict__ topkVals,
+                              int* __restrict__ topIdx, int M_SIZE) {
   __shared__ char sharedMemPool[TGEMM_TILE::SHARED_MEM_NEEDES_BYTES];
 
   for (int tokenIdx = blockIdx.x; tokenIdx < M_SIZE; tokenIdx += gridDim.x) {
@@ -30,27 +34,23 @@ __global__ void refHipKernel(const float* __restrict__ tokens,
     // Write to output:
     const int tid = threadIdx.x;
     if (threadIdx.x < TOPK) {
-      topkVals[tokenIdx * 8 + tid] = topkVals_shared[tid];
-      topIdx[tokenIdx * 8 + tid] = topkIdx_shared[tid];
+      topkVals[tokenIdx * TOPK + tid] = topkVals_shared[tid];
+      topIdx[tokenIdx * TOPK + tid] = topkIdx_shared[tid];
     }
   }
 }
 
-hipError_t refHipGemm(const float* A, const float* B, float* topkVals,
-                      int* topkIdx, int M, int N, int K) {
+hipError_t moeGate(const float* A, const float* B, float* topkVals,
+                   int* topkIdx, int M, int N, int K) {
   constexpr int m_tile_size = 1;
-  constexpr int n_tile_size = N_SIZE;
   assert(K == K_SIZE);
   assert(M == M_SIZE);
   assert(N == N_SIZE);
 
-  using TGemmTileParams = GemmTileParams<N_SIZE, K_SIZE, m_tile_size,
-                                         n_tile_size, 32, THREADS, float>;
-
   dim3 grid(BLOCKS);
-  dim3 block(TGemmTileParams::THREADS);
+  dim3 block(THREADS);
 
-  refHipKernel<TGemmTileParams>
+  moeGateKernel<T_GATE_TILE_METADATA>
       <<<grid, block, 0, 0>>>(A, B, topkVals, topkIdx, M);
 
   return hipSuccess;
@@ -82,7 +82,7 @@ TEST(MoeTasksInternalTests, MoeGate_basicTest) {
   HIP_ERROR_ASSERT(hipMemcpy(d_b, host_b.data(), b_size * sizeof(float),
                              hipMemcpyHostToDevice));
   HIP_ERROR_ASSERT(
-      refHipGemm(d_a, d_b, d_topkVals, d_topkIdx, M_SIZE, N_SIZE, K_SIZE));
+      moeGate(d_a, d_b, d_topkVals, d_topkIdx, M_SIZE, N_SIZE, K_SIZE));
 
   HIP_ERROR_ASSERT(hipDeviceSynchronize())
   HIP_ERROR_ASSERT(hipGetLastError());
