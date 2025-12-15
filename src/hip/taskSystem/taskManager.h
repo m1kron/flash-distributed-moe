@@ -92,6 +92,11 @@ TaskManager<TTask, SIZE>::Deinit(hipStream_t stream) {
 template <typename TTask, uint32_t SIZE>
 inline __host__ hipError_t TaskManager<TTask, SIZE>::PrepareForNextLaunch(
     hipStream_t stream, uint32_t expectedMaxTasks) {
+  if (expectedMaxTasks > GetTaskQueueSize()) {
+    MOE_ERROR_LOG("Expected max tasks(%d) exceeds queue size(%d)\n",
+                  expectedMaxTasks, SIZE);
+    return hipErrorUnknown;
+  }
   HIP_ERROR_CHECK(m_workQueue.PrepareForNextLaunch(stream));
   HIP_ERROR_CHECK(m_tasksAlloc.PrepareForNextLaunch(stream));
   HIP_ERROR_CHECK(hipMemcpyAsync(m_expectedMaxTasks, &expectedMaxTasks,
