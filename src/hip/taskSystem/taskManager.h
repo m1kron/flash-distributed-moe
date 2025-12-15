@@ -199,6 +199,12 @@ inline __device__ bool TaskManager<TTask, SIZE>::WaitAndPopTask_warp(
     bool shouldInterrupt = false;
     if (threadIdx.x == 0) {
       const auto ticket = m_workQueue.ReserveSlotTicket();
+
+      if (ticket == UINT_MAX) {
+        shouldInterrupt = true;
+        HIP_DEVICE_LOG("Breaking waiting loop, ticket == UINT_MAX\n");
+      }
+
       while (!m_workQueue.TryToPop(ticket, task_globalMem)) {
         if (DidExecuteExpectedNumberOfTasks()) {
           shouldInterrupt = true;
