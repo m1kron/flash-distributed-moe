@@ -1,5 +1,6 @@
 #include <hip/hip_runtime.h>
 
+#include "src/hip/common/metadata.h"
 #include "src/hip/hipHostCommon.h"
 #include "src/hip/kernel/tasks/internal/expertFFN1Block.h"
 #include "src/hip/kernel/tasks/internal/gateBlock.h"
@@ -13,30 +14,24 @@
 namespace {
 constexpr float ERROR_ABS = 2e-5f;
 constexpr int TOKENS_NUM = 48;
-constexpr int EXPERTS_NUM = 128;
-constexpr int HIDDEN_SIZE = 2048;
-constexpr int EXPERT_INTERMEDIATE_SIZE = 768;
-constexpr int TOPK = 8;
-constexpr int THREADS = 128;
-constexpr int BLOCKS = 304;
+constexpr int EXPERTS_NUM =
+    moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::EXPERTS_NUM;
+constexpr int HIDDEN_SIZE =
+    moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::HIDDEN_SIZE;
+constexpr int EXPERT_INTERMEDIATE_SIZE =
+    moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::EXPERT_INTERMEDIATE_SIZE;
+constexpr int TOPK = moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::TOPK;
+constexpr int THREADS = moe::MoeImplMetadata::HW_CONFIG::THREADS;
+constexpr int BLOCKS = moe::MoeImplMetadata::HW_CONFIG::BLOCKS;
+constexpr int EXPERT_TILE_SIZE =
+    moe::MoeImplMetadata::TILES_CONFIG::EXPERTS_N_TILE_SIZE;
 
-// Gate => tokens[TOKENS_NUM,HIDDEN_SIZE] * gate[HIDDEN_SIZE,EXPERTS_NUM] =>
-// routing[TOKENS_NUM,EXPERTS_NUM]
-using TGateGemmTileParams = GemmTileParams<EXPERTS_NUM, HIDDEN_SIZE, 1,
-                                           EXPERTS_NUM, 32, THREADS, float>;
-
-constexpr int EXPERT_TILE_SIZE = 256;
-// Expert => token[1,HIDDEN_SIZE] *
-// expertW[HIDDEN_SIZE,EXPERT_INTERMEDIATE_SIZE] => [1,EXPERT_INTERMEDIATE_SIZE]
+using TGateGemmTileParams =
+    moe::MoeImplMetadata::TILES_CONFIG::GATE_TILE_METADATA;
 using TExpertFFN1TileParams =
-    GemmTileParams<EXPERT_INTERMEDIATE_SIZE, HIDDEN_SIZE, 1, EXPERT_TILE_SIZE,
-                   32, THREADS, float>;
-
-// Expert => token[1,EXPERT_INTERMEDIATE_SIZE] *
-// expertW[EXPERT_INTERMEDIATE_SIZE,HIDDEN_SIZE] => [1,HIDDEN_SIZE]
+    moe::MoeImplMetadata::TILES_CONFIG::FFN1_TILE_METADATA;
 using TExpertFFN2TileParams =
-    GemmTileParams<HIDDEN_SIZE, EXPERT_INTERMEDIATE_SIZE, 1, EXPERT_TILE_SIZE,
-                   32, THREADS, float>;
+    moe::MoeImplMetadata::TILES_CONFIG::FFN2_TILE_METADATA;
 
 struct __align__(16) ExpertTileTask {
   const float* ffn1ExpertWeights;
@@ -203,19 +198,15 @@ __global__ void refHipGatefRoutingExpertsKernel(
       rTask.tokenIdx = tokenIdx;
       rTask.expertIdx = topkIdx_shared[i];
       rTask.expertWeight = topkVals_shared[i];
-      rTask.blockTileColStartIdx = 0;
       rTask.topkSlotIdx = i;
       rTask.taskType = 0;
 
-      globalTaskManager.PushTask_warp(&rTask);
-
-      rTask.blockTileColStartIdx = 1;
-
-      globalTaskManager.PushTask_warp(&rTask);
-
-      rTask.blockTileColStartIdx = 2;
-
-      globalTaskManager.PushTask_warp(&rTask);
+      constexpr int EXPERT_CHUNKS = T_FFN1_TILE::N / T_FFN1_TILE::TILE_N;
+#pragma unroll
+      for (int j = 0; j < EXPERT_CHUNKS; ++j) {
+        rTask.blockTileColStartIdx = j;
+        globalTaskManager.PushTask_warp(&rTask);
+      }
     }
   }
 
@@ -236,7 +227,7 @@ static hipError_t refHipGatefRoutingExperts(const float* tokens,
   assert(expertsNum == EXPERTS_NUM);
 
   dim3 grid(BLOCKS);
-  dim3 block(TGateGemmTileParams::THREADS);
+  dim3 block(THREADS);
 
   hipStream_t stream = 0;
   TaskManagerType managerHost;
