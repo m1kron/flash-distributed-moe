@@ -8,18 +8,13 @@ namespace moe {
 // TODO: do sth with __constant__ scattered over multiple files..
 __constant__ int* globalFFN1SyncArray;
 
-template <typename MOE_METADATA>
+template <typename RUNTIME_CONFIG>
 __device__ void ExecuteExpertFFN1Task(const MoeTaskDesc& task,
                                       void* sharedMemPool) {
-  using T_FFN1_TILE = typename MOE_METADATA::TILES_CONFIG::FFN1_TILE_METADATA;
+  using T_FFN1_TILE = typename RUNTIME_CONFIG::GEMM_RUNTIME_CONFIG::
+      FFN1_GEMM_TILE_IMPL::TILE_METADATA;
   using TType = typename T_FFN1_TILE::TType;
-  if (threadIdx.x == 65) {
-    HIP_DEVICE_LOG(
-        "Worker %i: Executes tile no: %i, tokenIdx: %i, expert: %i, weight: "
-        "%f, col: %i\n",
-        blockIdx.x, task.blockTileColStartIdx, task.tokenIdx, task.expertIdx,
-        task.expertWeight, task.blockTileColStartIdx);
-  }
+  constexpr auto TOPK = RUNTIME_CONFIG::MOE_METADATA::MOE_PROBLEM_CONFIG::TOPK;
 
   const TType* thisBlockTokens =
       static_cast<const TType*>(task.tokens) + task.tokenIdx * T_FFN1_TILE::K;
@@ -29,14 +24,13 @@ __device__ void ExecuteExpertFFN1Task(const MoeTaskDesc& task,
 
   TType outRegs[T_FFN1_TILE::THREAD_OUTPUT_SIZE];
 
-  tasks::internal::expertFFN1_block<T_FFN1_TILE>(
+  RUNTIME_CONFIG::GEMM_RUNTIME_CONFIG::FFN1_GEMM_TILE_IMPL::Execute(
       thisBlockTokens, thisffn1ExpertWeights, outRegs, 0,
       task.blockTileColStartIdx, sharedMemPool);
 
-  TType* thisBlockOutput =
-      static_cast<TType*>(task.ffn1Output) +
-      task.tokenIdx * MOE_METADATA::MOE_PROBLEM_CONFIG::TOPK * T_FFN1_TILE::N +
-      task.topkSlotIdx * T_FFN1_TILE::N;
+  TType* thisBlockOutput = static_cast<TType*>(task.ffn1Output) +
+                           task.tokenIdx * TOPK * T_FFN1_TILE::N +
+                           task.topkSlotIdx * T_FFN1_TILE::N;
 
   moe::tasks::internal::WriteGemmTileToGlobalMem_block<T_FFN1_TILE>(
       outRegs, thisBlockOutput, 0, task.blockTileColStartIdx);
@@ -46,10 +40,7 @@ __device__ void ExecuteExpertFFN1Task(const MoeTaskDesc& task,
   bool* lastBlock = reinterpret_cast<bool*>(sharedMemPool);
   if (threadIdx.x == 0) {
     int processed = atomicAdd(
-        &globalFFN1SyncArray[task.tokenIdx *
-                                 MOE_METADATA::MOE_PROBLEM_CONFIG::TOPK +
-                             task.topkSlotIdx],
-        1);
+        &globalFFN1SyncArray[task.tokenIdx * TOPK + task.topkSlotIdx], 1);
     *lastBlock = ((processed + 1) == N_CHUNKS);
   }
 

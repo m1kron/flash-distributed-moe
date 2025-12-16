@@ -2,6 +2,7 @@
 
 #include "src/hip/common/metadata.h"
 #include "src/hip/kernel/tasks/internal/gateBlock.h"
+#include "src/hip/kernel/tasks/internal/gemmImpl/gemmImplSelector.h"
 #include "test/cpp/moe/reference/refMoeGate.h"
 #include "test/cpp/utils/utils.h"
 
@@ -16,20 +17,21 @@ constexpr int BLOCKS = moe::MoeImplMetadata::HW_CONFIG::BLOCKS;
 using T_GATE_TILE_METADATA =
     moe::MoeImplMetadata::TILES_CONFIG::GATE_TILE_METADATA;
 
-template <typename TGEMM_TILE>
+template <typename TILE_GEMM_IMPL>
 __global__ void moeGateKernel(const float* __restrict__ tokens,
                               const float* __restrict__ gateWeights,
                               float* __restrict__ topkVals,
                               int* __restrict__ topIdx, int M_SIZE) {
-  __shared__ char sharedMemPool[TGEMM_TILE::SHARED_MEM_NEEDES_BYTES];
+  __shared__ char sharedMemPool[TILE_GEMM_IMPL::NeededSharedMemBytes()];
 
   for (int tokenIdx = blockIdx.x; tokenIdx < M_SIZE; tokenIdx += gridDim.x) {
     float* topkVals_shared = nullptr;
     int* topkIdx_shared = nullptr;
 
-    moe::tasks::internal::gate_block<TGEMM_TILE, TOPK>(
-        tokens, gateWeights, tokenIdx, &topkVals_shared, &topkIdx_shared,
-        sharedMemPool);
+    moe::tasks::internal::gate_block<typename TILE_GEMM_IMPL::TILE_METADATA,
+                                     TOPK>(tokens, gateWeights, tokenIdx,
+                                           &topkVals_shared, &topkIdx_shared,
+                                           sharedMemPool);
 
     // Write to output:
     const int tid = threadIdx.x;
@@ -50,7 +52,10 @@ hipError_t moeGate(const float* A, const float* B, float* topkVals,
   dim3 grid(BLOCKS);
   dim3 block(THREADS);
 
-  moeGateKernel<T_GATE_TILE_METADATA>
+  using TILE_GEMM_IMPL = typename moe::tasks::internal::GemmImplSelector<
+      T_GATE_TILE_METADATA>::type;
+
+  moeGateKernel<TILE_GEMM_IMPL>
       <<<grid, block, 0, 0>>>(A, B, topkVals, topkIdx, M);
 
   return hipSuccess;

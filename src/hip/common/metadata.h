@@ -50,7 +50,7 @@ struct TilesConfig {
 struct MoeImplMetadata {
   using MOE_PROBLEM_CONFIG = MoeProblemConfig;
   using HW_CONFIG = HWConfig;
-  using TILES_CONFIG = TilesConfig<HW_CONFIG, MoeProblemConfig>;
+  using TILES_CONFIG = TilesConfig<HW_CONFIG, MOE_PROBLEM_CONFIG>;
 };
 
 }  // namespace moe
