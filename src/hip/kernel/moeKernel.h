@@ -1,6 +1,4 @@
 #pragma once
-#include "src/hip/common/metadata.h"
-#include "src/hip/common/runtimeConfig.h"
 #include "src/hip/kernel/tasks/ffn1Task.h"
 #include "src/hip/kernel/tasks/ffn2Task.h"
 #include "src/hip/kernel/tasks/internal/gateBlock.h"
@@ -35,27 +33,29 @@ __device__ void ExecuteGeneralTask(const MoeTaskDesc& task,
 }
 
 // Main MOE kernel.
-template <typename MOE_METADATA>
+template <typename RUNTIME_CONFIG>
 __global__ void moeKernel(
-    const typename MOE_METADATA::MOE_PROBLEM_CONFIG::TDataType* tokens,
-    const typename MOE_METADATA::MOE_PROBLEM_CONFIG::
+    const typename RUNTIME_CONFIG::MOE_METADATA::MOE_PROBLEM_CONFIG::TDataType*
+        tokens,
+    const typename RUNTIME_CONFIG::MOE_METADATA::MOE_PROBLEM_CONFIG::
         TDataType* __restrict__ gateWeights,
-    const typename MOE_METADATA::MOE_PROBLEM_CONFIG::
+    const typename RUNTIME_CONFIG::MOE_METADATA::MOE_PROBLEM_CONFIG::
         TDataType* __restrict__ ffn1ExpertWeights,
-    const typename MOE_METADATA::MOE_PROBLEM_CONFIG::
+    const typename RUNTIME_CONFIG::MOE_METADATA::MOE_PROBLEM_CONFIG::
         TDataType* __restrict__ ffn2ExpertWeights,
-    typename MOE_METADATA::MOE_PROBLEM_CONFIG::
+    typename RUNTIME_CONFIG::MOE_METADATA::MOE_PROBLEM_CONFIG::
         TDataType* __restrict__ ffn1Output,
-    typename MOE_METADATA::MOE_PROBLEM_CONFIG::
+    typename RUNTIME_CONFIG::MOE_METADATA::MOE_PROBLEM_CONFIG::
         TDataType* __restrict__ ffn2Output,
-    typename MOE_METADATA::MOE_PROBLEM_CONFIG::TDataType* finalOutput,
+    typename RUNTIME_CONFIG::MOE_METADATA::MOE_PROBLEM_CONFIG::TDataType*
+        finalOutput,
     int tokensNum) {
-  using RUNTIME_CONFIG = moe::MoeRuntimeConfig;
   constexpr int TOPK = RUNTIME_CONFIG::MOE_METADATA::MOE_PROBLEM_CONFIG::TOPK;
 
   __shared__ char sharedMemPool[RUNTIME_CONFIG::SHARED_MEM_SIZE_BYTES];
 
-  using TType = typename MOE_METADATA::TILES_CONFIG::GATE_TILE_METADATA::TType;
+  using TType = typename RUNTIME_CONFIG::MOE_METADATA::TILES_CONFIG::
+      GATE_TILE_METADATA::TType;
 
   // Gate is scheduled statisically to avoid overhead of task system
   // scheduling.

@@ -12,16 +12,20 @@ namespace internal {
 // - execute() which executes gemm.
 template <typename GEMM_TILE_PARAMS>
 struct BasicGemmTileImpl {
+  // Metadata for the tile.
   using TILE_METADATA = GEMM_TILE_PARAMS;
 
+  // Retruns needed shared mem for this impl.
   static constexpr int NeededSharedMemBytes() {
     return ((GEMM_TILE_PARAMS::TILE_M * GEMM_TILE_PARAMS::TILE_K) +
             (GEMM_TILE_PARAMS::TILE_K * GEMM_TILE_PARAMS::TILE_N)) *
            sizeof(typename GEMM_TILE_PARAMS::TType);
   }
 
+  // Returns true if this implementation actually supports GEMM_TILE_PARAMS.
   static constexpr bool Supports() { return true; }
 
+  // Implementation.
   static __device__ void Execute(
       const typename GEMM_TILE_PARAMS::TType* __restrict__ A,
       const typename GEMM_TILE_PARAMS::TType* __restrict__ B,
