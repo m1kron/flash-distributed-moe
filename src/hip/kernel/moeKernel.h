@@ -51,6 +51,8 @@ __global__ void moeKernel(
     typename MOE_METADATA::MOE_PROBLEM_CONFIG::TDataType* finalOutput,
     int tokensNum) {
   using RUNTIME_CONFIG = moe::MoeRuntimeConfig;
+  constexpr int TOPK = RUNTIME_CONFIG::MOE_METADATA::MOE_PROBLEM_CONFIG::TOPK;
+
   __shared__ char sharedMemPool[RUNTIME_CONFIG::SHARED_MEM_SIZE_BYTES];
 
   using TType = typename MOE_METADATA::TILES_CONFIG::GATE_TILE_METADATA::TType;
@@ -62,15 +64,13 @@ __global__ void moeKernel(
     int* topkIdx_shared = nullptr;
 
     moe::tasks::internal::gate_block<
-        typename RUNTIME_CONFIG::MOE_METADATA::TILES_CONFIG::GATE_TILE_METADATA,
-        RUNTIME_CONFIG::MOE_METADATA::MOE_PROBLEM_CONFIG::TOPK>(
-        tokens, gateWeights, tokenIdx, &topkVals_shared, &topkIdx_shared,
-        sharedMemPool);
+        typename RUNTIME_CONFIG::GEMM_RUNTIME_CONFIG::GATE_GEMM_TILE_IMPL,
+        TOPK>(tokens, gateWeights, tokenIdx, &topkVals_shared, &topkIdx_shared,
+              sharedMemPool);
 
     // Warp 0 pushes all the tasks...
     // TODO: make it more paralllel.
-    for (int i = 0; i < RUNTIME_CONFIG::MOE_METADATA::MOE_PROBLEM_CONFIG::TOPK;
-         ++i) {
+    for (int i = 0; i < TOPK; ++i) {
       MoeTaskDesc rTask;
       rTask.ffn1ExpertWeights = ffn1ExpertWeights;
       rTask.ffn2ExpertWeights = ffn2ExpertWeights;

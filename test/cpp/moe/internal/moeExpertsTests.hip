@@ -28,8 +28,8 @@ constexpr int BLOCKS = moe::MoeRuntimeConfig::MOE_METADATA::HW_CONFIG::BLOCKS;
 constexpr int EXPERT_TILE_SIZE =
     moe::MoeRuntimeConfig::MOE_METADATA::TILES_CONFIG::EXPERTS_N_TILE_SIZE;
 
-using TGateGemmTileParams =
-    moe::MoeImplMetadata::TILES_CONFIG::GATE_TILE_METADATA;
+using TGateGemmTileImpl =
+    moe::MoeRuntimeConfig::GEMM_RUNTIME_CONFIG::GATE_GEMM_TILE_IMPL;
 using TExpertFFN1TileImpl =
     moe::MoeRuntimeConfig::GEMM_RUNTIME_CONFIG::FFN1_GEMM_TILE_IMPL;
 using TExpertFFN2TileImpl =
@@ -168,7 +168,7 @@ constexpr __device__ T max(T a, T b) {
   return a > b ? a : b;
 }
 
-template <typename T_GATE_TILE, typename T_FFN1_IMPL, typename T_FFN2_IMPL>
+template <typename T_GATE_IMPL, typename T_FFN1_IMPL, typename T_FFN2_IMPL>
 __global__ void refHipGatefRoutingExpertsKernel(
     const float* __restrict__ tokens, const float* __restrict__ gateWeights,
     const float* __restrict__ ffn1ExpertWeights,
@@ -178,10 +178,10 @@ __global__ void refHipGatefRoutingExpertsKernel(
 
   for (int tokenIdx = blockIdx.x; tokenIdx < TOKENS_NUM;
        tokenIdx += gridDim.x) {
-    typename T_GATE_TILE::TType* topkVals_shared = nullptr;
+    typename T_GATE_IMPL::TILE_METADATA::TType* topkVals_shared = nullptr;
     int* topkIdx_shared = nullptr;
 
-    moe::tasks::internal::gate_block<T_GATE_TILE, TOPK>(
+    moe::tasks::internal::gate_block<T_GATE_IMPL, TOPK>(
         tokens, gateWeights, tokenIdx, &topkVals_shared, &topkIdx_shared,
         sharedMemPool);
 
@@ -251,7 +251,7 @@ static hipError_t refHipGatefRoutingExperts(const float* tokens,
                                          &managerHost, sizeof(TaskManagerType),
                                          0, hipMemcpyHostToDevice, stream));
 
-  refHipGatefRoutingExpertsKernel<TGateGemmTileParams, TExpertFFN1TileImpl,
+  refHipGatefRoutingExpertsKernel<TGateGemmTileImpl, TExpertFFN1TileImpl,
                                   TExpertFFN2TileImpl><<<grid, block, 0, 0>>>(
       tokens, gateWeights, ffn1ExpertWeights, ffn2ExpertWeights, ffn1Output,
       ffn2Output, tokensNum);
