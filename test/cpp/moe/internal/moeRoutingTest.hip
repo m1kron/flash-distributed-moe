@@ -1,5 +1,6 @@
 #include <hip/hip_runtime.h>
 
+#include "src/hip/common/metadata.h"
 #include "src/hip/hipHostCommon.h"
 #include "src/hip/kernel/tasks/internal/gateBlock.h"
 #include "src/hip/taskSystem/taskManager.h"
@@ -10,24 +11,25 @@
 
 namespace {
 constexpr int TOKENS_NUM = 48;
-constexpr int EXPERTS_NUM = 128;
-constexpr int HIDDEN_SIZE = 2048;
-constexpr int EXPERT_INTERMEDIATE_SIZE = 768;
-constexpr int TOPK = 8;
-constexpr int THREADS = 128;
-constexpr int BLOCKS = 304;
+constexpr int EXPERTS_NUM =
+    moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::EXPERTS_NUM;
+constexpr int HIDDEN_SIZE =
+    moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::HIDDEN_SIZE;
+constexpr int EXPERT_INTERMEDIATE_SIZE =
+    moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::EXPERT_INTERMEDIATE_SIZE;
+constexpr int TOPK = moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::TOPK;
+constexpr int THREADS = moe::MoeImplMetadata::HW_CONFIG::THREADS;
+constexpr int BLOCKS = moe::MoeImplMetadata::HW_CONFIG::BLOCKS;
+constexpr int EXPERT_TILE_SIZE =
+    moe::MoeImplMetadata::TILES_CONFIG::EXPERTS_N_TILE_SIZE;
 
-// Gate => tokens[TOKENS_NUM,HIDDEN_SIZE] * gate[HIDDEN_SIZE,EXPERTS_NUM] =>
-// routing[TOKENS_NUM,EXPERTS_NUM]
-using TGateGemmTileParams = GemmTileParams<EXPERTS_NUM, HIDDEN_SIZE, 1,
-                                           EXPERTS_NUM, 32, THREADS, float>;
+using TGateGemmTileParams =
+    moe::MoeImplMetadata::TILES_CONFIG::GATE_TILE_METADATA;
 
-constexpr int EXPERT_TILE_SIZE = 256;
-// Expert => token[1,HIDDEN_SIZE] *
-// expertW[HIDDEN_SIZE,EXPERT_INTERMEDIATE_SIZE] => [1,EXPERT_INTERMEDIATE_SIZE]
 using TExpertGemmTileParams =
-    GemmTileParams<EXPERT_INTERMEDIATE_SIZE, HIDDEN_SIZE, 1, EXPERT_TILE_SIZE,
-                   32, THREADS, float>;
+    moe::MoeImplMetadata::TILES_CONFIG::FFN1_TILE_METADATA;
+
+// Custom task for this test.
 struct __align__(16) ExpertTileTask {
   const float* expertWeights;
   const float* tokens;
@@ -108,18 +110,14 @@ __global__ void refRoutingKernel(const float* __restrict__ tokens,
       rTask.tokenIdx = tokenIdx;
       rTask.expertIdx = topkIdx_shared[i];
       rTask.expertWeight = topkVals_shared[i];
-      rTask.blockTileColStartIdx = 0;
       rTask.topkSlotIdx = i;
 
-      globalTaskManager.PushTask_warp(&rTask);
-
-      rTask.blockTileColStartIdx = 1;
-
-      globalTaskManager.PushTask_warp(&rTask);
-
-      rTask.blockTileColStartIdx = 2;
-
-      globalTaskManager.PushTask_warp(&rTask);
+      constexpr int EXPERT_CHUNKS = T_EXPERT_TILE::N / T_EXPERT_TILE::TILE_N;
+#pragma unroll
+      for (int j = 0; j < EXPERT_CHUNKS; ++j) {
+        rTask.blockTileColStartIdx = j;
+        globalTaskManager.PushTask_warp(&rTask);
+      }
     }
   }
 

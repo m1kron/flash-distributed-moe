@@ -1,5 +1,6 @@
 #include <hip/hip_runtime.h>
 
+#include "src/hip/common/metadata.h"
 #include "src/hip/kernel/tasks/internal/gemmTileBlock.h"
 #include "test/cpp/benchmarks/benchmarkUtils.h"
 #include "test/cpp/moe/reference/refGemm.h"
@@ -73,7 +74,7 @@ std::vector<T> refBatchedGemv(const T* A, const T* B, int M, int N, int K) {
 }
 
 template <int M, int N, int K, int N_TILE, int K_TILE, int THREADS>
-void PerformBenchmark() {
+void PerformBenchmark(const std::string& name = "MOE-like batched gemv") {
   // Batched gemv: Matrix A keeps M vectors, represented as single matrix of
   // size, matrix B keeps M Matrices, each of size K*N as a single matrix of
   // size MxNxK. Result is again stored as single matrix of size MxN. This kind
@@ -121,20 +122,74 @@ void PerformBenchmark() {
 
   CheckAgainstRefBuffer(host_c, ref, ABS_ERROR);
 
-  std::cout << "MOE-like gemm [" << M << "x" << N << "x" << K
+  std::cout << name << ": [" << M << "x" << N << "x" << K
             << "], with params: <N_TILE: " << N_TILE << ", K_TILE: " << K_TILE
             << ", THREADS: " << THREADS << "> kernel avg time is " << avg_ms
             << " ms." << std::endl;
 }
 
-#define DECLARE_BENCHMARK(M, N, K, N_TILE, K_TILE, THREADS) \
-  PerformBenchmark<M, N, K, N_TILE, K_TILE, THREADS>();
+template <int TOKENS>
+void PerformRealMoeGemms() {
+  std::cout << std::endl
+            << "Benchmarking real MOE gemms for " << TOKENS
+            << " tokens:" << std::endl;
+  // Gate gemm:
+  {
+    const int M = TOKENS;
+    const int N = moe::MoeImplMetadata::TILES_CONFIG::GATE_TILE_METADATA::N;
+    const int K = moe::MoeImplMetadata::TILES_CONFIG::GATE_TILE_METADATA::K;
+    const int N_TILE =
+        moe::MoeImplMetadata::TILES_CONFIG::GATE_TILE_METADATA::TILE_N;
+    const int K_TILE =
+        moe::MoeImplMetadata::TILES_CONFIG::GATE_TILE_METADATA::TILE_K;
+    const int THREADS =
+        moe::MoeImplMetadata::TILES_CONFIG::GATE_TILE_METADATA::THREADS;
 
-TEST(Benchmark, MoeLikeGemm) {
-  PerformBenchmark<8, 768, 2048, 256, 32, 128>();
-  PerformBenchmark<8, 2048, 768, 256, 32, 128>();
+    PerformBenchmark<M, N, K, N_TILE, K_TILE, THREADS>("MOE gate gemm");
+  }
 
-  PerformBenchmark<128, 768, 2048, 256, 32, 128>();
-  PerformBenchmark<128, 2048, 768, 256, 32, 128>();
+  // FFN1 gemm:
+  {
+    const int M = TOKENS * moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::TOPK;
+    const int N = moe::MoeImplMetadata::TILES_CONFIG::FFN1_TILE_METADATA::N;
+    const int K = moe::MoeImplMetadata::TILES_CONFIG::FFN1_TILE_METADATA::K;
+    const int N_TILE =
+        moe::MoeImplMetadata::TILES_CONFIG::FFN1_TILE_METADATA::TILE_N;
+    const int K_TILE =
+        moe::MoeImplMetadata::TILES_CONFIG::FFN1_TILE_METADATA::TILE_K;
+    const int THREADS =
+        moe::MoeImplMetadata::TILES_CONFIG::FFN1_TILE_METADATA::THREADS;
+
+    PerformBenchmark<M, N, K, N_TILE, K_TILE, THREADS>("MOE FFN1 gemm");
+  }
+
+  // FFN2 gemm:
+  {
+    const int M = TOKENS * moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::TOPK;
+    const int N = moe::MoeImplMetadata::TILES_CONFIG::FFN2_TILE_METADATA::N;
+    const int K = moe::MoeImplMetadata::TILES_CONFIG::FFN2_TILE_METADATA::K;
+    const int N_TILE =
+        moe::MoeImplMetadata::TILES_CONFIG::FFN2_TILE_METADATA::TILE_N;
+    const int K_TILE =
+        moe::MoeImplMetadata::TILES_CONFIG::FFN2_TILE_METADATA::TILE_K;
+    const int THREADS =
+        moe::MoeImplMetadata::TILES_CONFIG::FFN2_TILE_METADATA::THREADS;
+
+    PerformBenchmark<M, N, K, N_TILE, K_TILE, THREADS>("MOE FFN2 gemm");
+  }
+}
+TEST(Benchmark, RealMoeGemms) {
+  PerformRealMoeGemms<1>();
+  PerformRealMoeGemms<16>();
+  PerformRealMoeGemms<32>();
+}
+
+TEST(Benchmark, MoeLikeBatchedGemv) {
+  // Benchmarking other metadata parameters, to see how it performs.
+  PerformBenchmark<8, 768, 2048, 256, 32, 256>();
+  PerformBenchmark<8, 2048, 768, 256, 32, 256>();
+  PerformBenchmark<128, 2048, 768, 256, 16, 256>();
+
+  // One can add here more specific configurations, to see how it performs.
 }
 }  // namespace

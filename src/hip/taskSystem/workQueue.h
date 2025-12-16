@@ -24,7 +24,8 @@ struct WorkQueue {
   // Pushes item to the queue in device code, returns false if out of slots.
   __device__ bool Push(T* item_global_ptr);
 
-  // Reserves slot ticket for popping item from the queue.
+  // Reserves slot ticket for popping item from the queue. Returns UINT_MAX if
+  // there are no more slots to reserve(all used).
   __device__ unsigned int ReserveSlotTicket();
 
   // Tries to pop item from the queue for given slot ticket. Returns false if no
@@ -98,7 +99,7 @@ inline __device__ unsigned int WorkQueue<T, SIZE>::ReserveSlotTicket() {
   const unsigned int slotIdx = atomicAdd(m_tailIdx, 1);
   if (slotIdx >= SIZE) {
     HIP_DEVICE_LOG("Out of slots!\n");
-    return 0;
+    return UINT_MAX;
   }
   return slotIdx;
 }
@@ -108,6 +109,10 @@ template <typename T, unsigned int SIZE>
 inline __device__ bool WorkQueue<T, SIZE>::TryToPop(unsigned int slotTicket,
                                                     T*& outItem) {
   const unsigned int slotIdx = slotTicket;
+  if (slotIdx >= SIZE) {
+    return false;
+  }
+
   const unsigned int currentHeadIdx =
       __atomic_load_n(m_headIdx, __ATOMIC_RELAXED);
 

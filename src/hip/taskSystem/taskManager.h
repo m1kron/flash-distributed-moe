@@ -9,7 +9,7 @@
 // will be a problem, I will switch to backup solution, but that depends on
 // workload which will be determined in the future.
 
-template <typename TTask, unsigned int SIZE>
+template <typename TTask, uint32_t SIZE>
 struct TaskManager {
   using TTaskType = TTask;
 
@@ -21,7 +21,10 @@ struct TaskManager {
 
   // Prepares for next launch(clears the state).
   __host__ hipError_t PrepareForNextLaunch(hipStream_t stream,
-                                           unsigned expectedMaxTasks);
+                                           uint32_t expectedMaxTasks);
+
+  // Returns queue size.
+  __host__ uint32_t GetTaskQueueSize() const;
 
   // Gets the current number of executed tasks.
   __device__ uint32_t GetCurrentExecutedTasks() const;
@@ -62,7 +65,7 @@ struct TaskManager {
 /////////////////////////////////////////////////////////////////
 
 /////////////////////////////////////////////////////////////////
-template <typename TTask, unsigned int SIZE>
+template <typename TTask, uint32_t SIZE>
 inline __host__ hipError_t TaskManager<TTask, SIZE>::Init(hipStream_t stream) {
   // TODO: allocated all neeeded mem with single call.
   HIP_ERROR_CHECK(m_workQueue.Init(stream));
@@ -75,7 +78,7 @@ inline __host__ hipError_t TaskManager<TTask, SIZE>::Init(hipStream_t stream) {
 }
 
 /////////////////////////////////////////////////////////////////
-template <typename TTask, unsigned int SIZE>
+template <typename TTask, uint32_t SIZE>
 inline __host__ hipError_t
 TaskManager<TTask, SIZE>::Deinit(hipStream_t stream) {
   HIP_ERROR_CHECK(m_workQueue.Deinit(stream));
@@ -86,9 +89,14 @@ TaskManager<TTask, SIZE>::Deinit(hipStream_t stream) {
 }
 
 /////////////////////////////////////////////////////////////////
-template <typename TTask, unsigned int SIZE>
+template <typename TTask, uint32_t SIZE>
 inline __host__ hipError_t TaskManager<TTask, SIZE>::PrepareForNextLaunch(
-    hipStream_t stream, unsigned expectedMaxTasks) {
+    hipStream_t stream, uint32_t expectedMaxTasks) {
+  if (expectedMaxTasks > GetTaskQueueSize()) {
+    MOE_ERROR_LOG("Expected max tasks(%d) exceeds queue size(%d)\n",
+                  expectedMaxTasks, SIZE);
+    return hipErrorUnknown;
+  }
   HIP_ERROR_CHECK(m_workQueue.PrepareForNextLaunch(stream));
   HIP_ERROR_CHECK(m_tasksAlloc.PrepareForNextLaunch(stream));
   HIP_ERROR_CHECK(hipMemcpyAsync(m_expectedMaxTasks, &expectedMaxTasks,
@@ -99,22 +107,28 @@ inline __host__ hipError_t TaskManager<TTask, SIZE>::PrepareForNextLaunch(
   return hipSuccess;
 }
 
+////////////////////////////////////////////////////////////////
+template <typename TTask, uint32_t SIZE>
+inline __host__ uint32_t TaskManager<TTask, SIZE>::GetTaskQueueSize() const {
+  return SIZE;
+}
+
 /////////////////////////////////////////////////////////////////
-template <typename TTask, unsigned int SIZE>
+template <typename TTask, uint32_t SIZE>
 inline __device__ uint32_t
 TaskManager<TTask, SIZE>::GetCurrentExecutedTasks() const {
   return __atomic_load_n(m_currentExecutedTasks, __ATOMIC_RELAXED);
 }
 
 /////////////////////////////////////////////////////////////////
-template <typename TTask, unsigned int SIZE>
+template <typename TTask, uint32_t SIZE>
 inline __device__ void
 TaskManager<TTask, SIZE>::IncrementCurrentExecutedTasks() {
   atomicAdd(m_currentExecutedTasks, 1);
 }
 
 /////////////////////////////////////////////////////////////////
-template <typename TTask, unsigned int SIZE>
+template <typename TTask, uint32_t SIZE>
 inline __device__ bool
 TaskManager<TTask, SIZE>::DidExecuteExpectedNumberOfTasks() const {
   // read atomically and compare with max
@@ -124,19 +138,19 @@ TaskManager<TTask, SIZE>::DidExecuteExpectedNumberOfTasks() const {
 }
 
 /////////////////////////////////////////////////////////////////
-template <typename TTask, unsigned int SIZE>
+template <typename TTask, uint32_t SIZE>
 inline __device__ TTask* TaskManager<TTask, SIZE>::AllocateTask() {
   return m_tasksAlloc.Allocate();
 }
 
 /////////////////////////////////////////////////////////////////
-template <typename TTask, unsigned int SIZE>
+template <typename TTask, uint32_t SIZE>
 inline __device__ void TaskManager<TTask, SIZE>::FreeTask(TTask* task) {
   m_tasksAlloc.Free(task);
 }
 
 /////////////////////////////////////////////////////////////////
-template <typename TTask, unsigned int SIZE>
+template <typename TTask, uint32_t SIZE>
 inline __device__ void TaskManager<TTask, SIZE>::PushTask_warp(TTask* task) {
   if (threadIdx.x / warpSize == 0) {
     TTask* task_globalMem = nullptr;
@@ -175,7 +189,7 @@ inline __device__ void TaskManager<TTask, SIZE>::PushTask_warp(TTask* task) {
 }
 
 /////////////////////////////////////////////////////////////////
-template <typename TTask, unsigned int SIZE>
+template <typename TTask, uint32_t SIZE>
 inline __device__ bool TaskManager<TTask, SIZE>::WaitAndPopTask_warp(
     TTask* task_sharedMem) {
   // Get new task:
@@ -185,6 +199,12 @@ inline __device__ bool TaskManager<TTask, SIZE>::WaitAndPopTask_warp(
     bool shouldInterrupt = false;
     if (threadIdx.x == 0) {
       const auto ticket = m_workQueue.ReserveSlotTicket();
+
+      if (ticket == UINT_MAX) {
+        shouldInterrupt = true;
+        HIP_DEVICE_LOG("Breaking waiting loop, ticket == UINT_MAX\n");
+      }
+
       while (!m_workQueue.TryToPop(ticket, task_globalMem)) {
         if (DidExecuteExpectedNumberOfTasks()) {
           shouldInterrupt = true;

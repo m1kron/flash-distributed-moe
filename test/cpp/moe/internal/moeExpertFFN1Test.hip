@@ -1,5 +1,6 @@
 #include <hip/hip_runtime.h>
 
+#include "src/hip/common/metadata.h"
 #include "src/hip/hipHostCommon.h"
 #include "src/hip/kernel/tasks/internal/expertFFN1Block.h"
 #include "src/hip/utils/hipDeviceUtils.h"
@@ -8,20 +9,15 @@
 
 namespace {
 constexpr int TOKENS_NUM = 48;
-constexpr int EXPERTS_NUM = 128;
-constexpr int HIDDEN_SIZE = 2048;
-constexpr int EXPERT_INTERMEDIATE_SIZE = 768;
-constexpr int TOPK = 8;
-constexpr int THREADS = 128;
-constexpr int BLOCKS = 304;
-
-constexpr int EXPERT_TILE_SIZE = 256;
+constexpr int HIDDEN_SIZE =
+    moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::HIDDEN_SIZE;
+constexpr int EXPERT_INTERMEDIATE_SIZE =
+    moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::EXPERT_INTERMEDIATE_SIZE;
 
 constexpr float ABS_ERROR = 1e-4f;
 
 using TExpertGemmTileParams =
-    GemmTileParams<EXPERT_INTERMEDIATE_SIZE, HIDDEN_SIZE, 1, EXPERT_TILE_SIZE,
-                   32, THREADS, float>;
+    moe::MoeImplMetadata::TILES_CONFIG::FFN1_TILE_METADATA;
 
 __global__ void hipExpertFFN1Kernel(const float* __restrict__ tokens,
                                     const float* __restrict__ expertWeights,
