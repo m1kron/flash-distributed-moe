@@ -2,7 +2,7 @@
 
 #include "src/hip/common/metadata.h"
 #include "src/hip/kernel/tasks/internal/gemmImpl/gemmImplSelector.h"
-#include "src/hip/kernel/tasks/internal/gemmTileBlock.h"
+#include "src/hip/kernel/tasks/internal/writeGemmTileBlock.h"
 #include "test/cpp/benchmarks/benchmarkUtils.h"
 #include "test/cpp/moe/reference/refGemm.h"
 #include "test/cpp/utils/utils.h"
@@ -16,6 +16,7 @@ __global__ void batchedGemvKernel(const float* __restrict__ A,
                                   float* __restrict__ output) {
   using GemmImpl =
       typename moe::tasks::internal::GemmImplSelector<TGEMM_TILE>::type;
+
   __shared__ char sharedMemPool[GemmImpl::NeededSharedMemBytes()];
 
   constexpr int N_CHUNKS = TGEMM_TILE::N / TGEMM_TILE::TILE_N;

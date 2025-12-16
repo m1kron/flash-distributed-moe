@@ -1,10 +1,10 @@
 #include <hip/hip_runtime.h>
 
-#include "src/hip/common/metadata.h"
 #include "src/hip/common/runtimeConfig.h"
 #include "src/hip/hipHostCommon.h"
 #include "src/hip/kernel/tasks/internal/expertFFN1Block.h"
 #include "src/hip/kernel/tasks/internal/gateBlock.h"
+#include "src/hip/kernel/tasks/internal/writeGemmTileBlock.h"
 #include "src/hip/taskSystem/taskManager.h"
 #include "src/hip/taskSystem/workerLoop.h"
 #include "src/hip/utils/hipDeviceUtils.h"

@@ -12,8 +12,6 @@ struct GemmTileParams {
   constexpr static int TILE_K = _TILE_K;
   constexpr static int THREADS = _THREADS;
   constexpr static int THREAD_OUTPUT_SIZE = (TILE_M * TILE_N) / THREADS;
-  constexpr static int SHARED_MEM_NEEDES_BYTES =
-      ((TILE_M * TILE_K) + (TILE_K * TILE_N)) * sizeof(TType);
 
   static_assert(THREAD_OUTPUT_SIZE > 0, "Invalid thread output size");
 };

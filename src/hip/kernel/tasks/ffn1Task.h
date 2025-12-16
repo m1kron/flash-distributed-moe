@@ -1,5 +1,6 @@
 #pragma once
 #include "src/hip/kernel/tasks/internal/expertFFN1Block.h"
+#include "src/hip/kernel/tasks/internal/writeGemmTileBlock.h"
 #include "src/hip/kernel/tasks/taskDesc.h"
 #include "src/hip/utils/hipDeviceUtils.h"
 

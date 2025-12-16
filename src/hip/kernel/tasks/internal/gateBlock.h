@@ -1,5 +1,4 @@
 #pragma once
-#include "src/hip/kernel/tasks/internal/gemmTileBlock.h"
 #include "src/hip/kernel/tasks/internal/softmaxBlock.h"
 #include "src/hip/kernel/tasks/internal/topkBlock.h"
 

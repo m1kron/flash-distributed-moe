@@ -27,11 +27,9 @@ struct MoeRuntimeConfigImpl {
       GemmRuntimeConfig<typename MOE_METADATA::TILES_CONFIG>;
 
   static constexpr int SHARED_MEM_SIZE_BYTES = max(
-      MOE_METADATA::TILES_CONFIG::GATE_TILE_METADATA::SHARED_MEM_NEEDES_BYTES,
-      max(MOE_METADATA::TILES_CONFIG::FFN1_TILE_METADATA::
-              SHARED_MEM_NEEDES_BYTES,
-          MOE_METADATA::TILES_CONFIG::FFN2_TILE_METADATA::
-              SHARED_MEM_NEEDES_BYTES));
+      GEMM_RUNTIME_CONFIG::GATE_GEMM_TILE_IMPL::NeededSharedMemBytes(),
+      max(GEMM_RUNTIME_CONFIG::FFN1_GEMM_TILE_IMPL::NeededSharedMemBytes(),
+          GEMM_RUNTIME_CONFIG::FFN2_GEMM_TILE_IMPL::NeededSharedMemBytes()));
 };
 
 using MoeRuntimeConfig = MoeRuntimeConfigImpl<moe::MoeImplMetadata>;

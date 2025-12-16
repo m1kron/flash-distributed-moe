@@ -3,6 +3,7 @@
 #include "src/hip/common/runtimeConfig.h"
 #include "src/hip/hipHostCommon.h"
 #include "src/hip/kernel/tasks/internal/expertFFN1Block.h"
+#include "src/hip/kernel/tasks/internal/writeGemmTileBlock.h"
 #include "src/hip/utils/hipDeviceUtils.h"
 #include "test/cpp/moe/reference/refExpertFFN1.h"
 #include "test/cpp/utils/utils.h"
