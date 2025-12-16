@@ -16,13 +16,11 @@ __device__ void ExecuteGeneralTask(const MoeTaskDesc& task,
                                    void* sharedMemPool) {
   switch (task.taskType) {
     case TaskType::FFN1: {
-      ExecuteExpertFFN1Task<RUNTIME_CONFIG>(
-          task, sharedMemPool);
+      ExecuteExpertFFN1Task<RUNTIME_CONFIG>(task, sharedMemPool);
       break;
     }
     case TaskType::FFN2: {
-      ExecuteExpertFFN2Task<RUNTIME_CONFIG>(
-          task, sharedMemPool);
+      ExecuteExpertFFN2Task<RUNTIME_CONFIG>(task, sharedMemPool);
       break;
     }
     case TaskType::REDUCE: {
@@ -52,7 +50,7 @@ __global__ void moeKernel(
         TDataType* __restrict__ ffn2Output,
     typename MOE_METADATA::MOE_PROBLEM_CONFIG::TDataType* finalOutput,
     int tokensNum) {
-  using RUNTIME_CONFIG = moe::MoeRuntimeConfig<MOE_METADATA>;
+  using RUNTIME_CONFIG = moe::MoeRuntimeConfig;
   __shared__ char sharedMemPool[RUNTIME_CONFIG::SHARED_MEM_SIZE_BYTES];
 
   using TType = typename MOE_METADATA::TILES_CONFIG::GATE_TILE_METADATA::TType;

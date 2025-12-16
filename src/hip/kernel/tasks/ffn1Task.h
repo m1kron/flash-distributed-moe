@@ -11,8 +11,9 @@ __constant__ int* globalFFN1SyncArray;
 template <typename RUNTIME_CONFIG>
 __device__ void ExecuteExpertFFN1Task(const MoeTaskDesc& task,
                                       void* sharedMemPool) {
-  using T_FFN1_TILE = typename RUNTIME_CONFIG::GEMM_RUNTIME_CONFIG::
-      FFN1_GEMM_TILE_IMPL::TILE_METADATA;
+  using T_FFN1_TILE_IMPL =
+      typename RUNTIME_CONFIG::GEMM_RUNTIME_CONFIG::FFN1_GEMM_TILE_IMPL;
+  using T_FFN1_TILE = typename T_FFN1_TILE_IMPL::TILE_METADATA;
   using TType = typename T_FFN1_TILE::TType;
   constexpr auto TOPK = RUNTIME_CONFIG::MOE_METADATA::MOE_PROBLEM_CONFIG::TOPK;
 
@@ -24,7 +25,7 @@ __device__ void ExecuteExpertFFN1Task(const MoeTaskDesc& task,
 
   TType outRegs[T_FFN1_TILE::THREAD_OUTPUT_SIZE];
 
-  RUNTIME_CONFIG::GEMM_RUNTIME_CONFIG::FFN1_GEMM_TILE_IMPL::Execute(
+  tasks::internal::expertFFN1_block<T_FFN1_TILE_IMPL>(
       thisBlockTokens, thisffn1ExpertWeights, outRegs, 0,
       task.blockTileColStartIdx, sharedMemPool);
 

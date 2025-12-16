@@ -1,6 +1,7 @@
 #include <hip/hip_runtime.h>
 
 #include "src/hip/common/metadata.h"
+#include "src/hip/common/runtimeConfig.h"
 #include "src/hip/hipHostCommon.h"
 #include "src/hip/kernel/tasks/internal/expertFFN1Block.h"
 #include "src/hip/kernel/tasks/internal/gateBlock.h"
@@ -15,23 +16,24 @@ namespace {
 constexpr float ERROR_ABS = 2e-5f;
 constexpr int TOKENS_NUM = 48;
 constexpr int EXPERTS_NUM =
-    moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::EXPERTS_NUM;
+    moe::MoeRuntimeConfig::MOE_METADATA::MOE_PROBLEM_CONFIG::EXPERTS_NUM;
 constexpr int HIDDEN_SIZE =
-    moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::HIDDEN_SIZE;
-constexpr int EXPERT_INTERMEDIATE_SIZE =
-    moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::EXPERT_INTERMEDIATE_SIZE;
-constexpr int TOPK = moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::TOPK;
-constexpr int THREADS = moe::MoeImplMetadata::HW_CONFIG::THREADS;
-constexpr int BLOCKS = moe::MoeImplMetadata::HW_CONFIG::BLOCKS;
+    moe::MoeRuntimeConfig::MOE_METADATA::MOE_PROBLEM_CONFIG::HIDDEN_SIZE;
+constexpr int EXPERT_INTERMEDIATE_SIZE = moe::MoeRuntimeConfig::MOE_METADATA::
+    MOE_PROBLEM_CONFIG::EXPERT_INTERMEDIATE_SIZE;
+constexpr int TOPK =
+    moe::MoeRuntimeConfig::MOE_METADATA::MOE_PROBLEM_CONFIG::TOPK;
+constexpr int THREADS = moe::MoeRuntimeConfig::MOE_METADATA::HW_CONFIG::THREADS;
+constexpr int BLOCKS = moe::MoeRuntimeConfig::MOE_METADATA::HW_CONFIG::BLOCKS;
 constexpr int EXPERT_TILE_SIZE =
-    moe::MoeImplMetadata::TILES_CONFIG::EXPERTS_N_TILE_SIZE;
+    moe::MoeRuntimeConfig::MOE_METADATA::TILES_CONFIG::EXPERTS_N_TILE_SIZE;
 
 using TGateGemmTileParams =
     moe::MoeImplMetadata::TILES_CONFIG::GATE_TILE_METADATA;
-using TExpertFFN1TileParams =
-    moe::MoeImplMetadata::TILES_CONFIG::FFN1_TILE_METADATA;
-using TExpertFFN2TileParams =
-    moe::MoeImplMetadata::TILES_CONFIG::FFN2_TILE_METADATA;
+using TExpertFFN1TileImpl =
+    moe::MoeRuntimeConfig::GEMM_RUNTIME_CONFIG::FFN1_GEMM_TILE_IMPL;
+using TExpertFFN2TileImpl =
+    moe::MoeRuntimeConfig::GEMM_RUNTIME_CONFIG::FFN2_GEMM_TILE_IMPL;
 
 struct __align__(16) ExpertTileTask {
   const float* ffn1ExpertWeights;
@@ -51,9 +53,10 @@ using TaskManagerType = TaskManager<ExpertTileTask, 8192>;
 static __constant__ TaskManagerType globalTaskManager;
 static __constant__ int* globalFFN1SyncArray;
 
-template <typename T_FFN1_TILE>
+template <typename T_FFN1_IMPL>
 __device__ void ExecuteExpertFFN1Task(const ExpertTileTask& task,
                                       void* sharedMemPool) {
+  using T_FFN1_TILE = typename T_FFN1_IMPL::TILE_METADATA;
   if (threadIdx.x == 65) {
     HIP_DEVICE_LOG(
         "Worker %i: Executes tile no: %i, tokenIdx: %i, expert: %i, weight: "
@@ -68,7 +71,7 @@ __device__ void ExecuteExpertFFN1Task(const ExpertTileTask& task,
 
   typename T_FFN1_TILE::TType outRegs[T_FFN1_TILE::THREAD_OUTPUT_SIZE];
 
-  moe::tasks::internal::expertFFN1_block<T_FFN1_TILE>(
+  moe::tasks::internal::expertFFN1_block<T_FFN1_IMPL>(
       thisBlockTokens, thisffn1ExpertWeights, outRegs, 0,
       task.blockTileColStartIdx, sharedMemPool);
 
@@ -102,9 +105,10 @@ __device__ void ExecuteExpertFFN1Task(const ExpertTileTask& task,
   }
 }
 
-template <typename T_FFN2_TILE>
+template <typename T_FFN2_IMPL>
 __device__ void ExecuteExpertFFN2Task(const ExpertTileTask& task,
                                       void* sharedMemPool) {
+  using T_FFN2_TILE = typename T_FFN2_IMPL::TILE_METADATA;
   if (threadIdx.x == 65) {
     HIP_DEVICE_LOG(
         "Worker %i: Executes tile no: %i, tokenIdx: %i, expert: %i, weight: "
@@ -121,9 +125,8 @@ __device__ void ExecuteExpertFFN2Task(const ExpertTileTask& task,
 
   typename T_FFN2_TILE::TType outRegs[T_FFN2_TILE::THREAD_OUTPUT_SIZE];
 
-  moe::tasks::internal::GemmTile_block<T_FFN2_TILE>(
-      thisBlockInput, thisffn2ExpertWeights, outRegs, 0,
-      task.blockTileColStartIdx, sharedMemPool);
+  T_FFN2_IMPL::Execute(thisBlockInput, thisffn2ExpertWeights, outRegs, 0,
+                       task.blockTileColStartIdx, sharedMemPool);
 
   float* thisBlockOutput = task.ffn2Output +
                            task.tokenIdx * TOPK * (T_FFN2_TILE::N + 2) +
@@ -142,16 +145,16 @@ __device__ void ExecuteExpertFFN2Task(const ExpertTileTask& task,
       outRegs, thisBlockOutput, 0, task.blockTileColStartIdx);
 }
 
-template <typename T_FFN1_TILE, typename T_FFN2_TILE>
+template <typename T_FFN1_IMPL, typename T_FFN2_IMPL>
 __device__ void ExecuteGeneralTask(const ExpertTileTask& task,
                                    void* sharedMemPool) {
   switch (task.taskType) {
     case 0: {
-      ExecuteExpertFFN1Task<T_FFN1_TILE>(task, sharedMemPool);
+      ExecuteExpertFFN1Task<T_FFN1_IMPL>(task, sharedMemPool);
       break;
     }
     case 1: {
-      ExecuteExpertFFN2Task<T_FFN2_TILE>(task, sharedMemPool);
+      ExecuteExpertFFN2Task<T_FFN2_IMPL>(task, sharedMemPool);
       break;
     }
     default: {
@@ -165,18 +168,13 @@ constexpr __device__ T max(T a, T b) {
   return a > b ? a : b;
 }
 
-template <typename T_GATE_TILE, typename T_FFN1_TILE, typename T_FFN2_TILE>
+template <typename T_GATE_TILE, typename T_FFN1_IMPL, typename T_FFN2_IMPL>
 __global__ void refHipGatefRoutingExpertsKernel(
     const float* __restrict__ tokens, const float* __restrict__ gateWeights,
     const float* __restrict__ ffn1ExpertWeights,
     const float* __restrict__ ffn2ExpertWeights, float* __restrict__ ffn1Output,
     float* __restrict__ ffn2Output, int TOKENS_NUM) {
-  constexpr int SHARED_MEM_SIZE_BYTES =
-      max(T_GATE_TILE::SHARED_MEM_NEEDES_BYTES,
-          max(T_FFN1_TILE::SHARED_MEM_NEEDES_BYTES,
-              T_FFN2_TILE::SHARED_MEM_NEEDES_BYTES));
-
-  __shared__ char sharedMemPool[SHARED_MEM_SIZE_BYTES];
+  __shared__ char sharedMemPool[moe::MoeRuntimeConfig::SHARED_MEM_SIZE_BYTES];
 
   for (int tokenIdx = blockIdx.x; tokenIdx < TOKENS_NUM;
        tokenIdx += gridDim.x) {
@@ -201,7 +199,8 @@ __global__ void refHipGatefRoutingExpertsKernel(
       rTask.topkSlotIdx = i;
       rTask.taskType = 0;
 
-      constexpr int EXPERT_CHUNKS = T_FFN1_TILE::N / T_FFN1_TILE::TILE_N;
+      constexpr int EXPERT_CHUNKS =
+          T_FFN1_IMPL::TILE_METADATA::N / T_FFN1_IMPL::TILE_METADATA::TILE_N;
 #pragma unroll
       for (int j = 0; j < EXPERT_CHUNKS; ++j) {
         rTask.blockTileColStartIdx = j;
@@ -211,7 +210,7 @@ __global__ void refHipGatefRoutingExpertsKernel(
   }
 
   workerTaskSystemLoop_block(globalTaskManager,
-                             ExecuteGeneralTask<T_FFN1_TILE, T_FFN2_TILE>,
+                             ExecuteGeneralTask<T_FFN1_IMPL, T_FFN2_IMPL>,
                              sharedMemPool);
 }
 
@@ -252,8 +251,8 @@ static hipError_t refHipGatefRoutingExperts(const float* tokens,
                                          &managerHost, sizeof(TaskManagerType),
                                          0, hipMemcpyHostToDevice, stream));
 
-  refHipGatefRoutingExpertsKernel<TGateGemmTileParams, TExpertFFN1TileParams,
-                                  TExpertFFN2TileParams><<<grid, block, 0, 0>>>(
+  refHipGatefRoutingExpertsKernel<TGateGemmTileParams, TExpertFFN1TileImpl,
+                                  TExpertFFN2TileImpl><<<grid, block, 0, 0>>>(
       tokens, gateWeights, ffn1ExpertWeights, ffn2ExpertWeights, ffn1Output,
       ffn2Output, tokensNum);
 

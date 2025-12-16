@@ -21,7 +21,7 @@ struct GemmRuntimeConfig {
 };
 
 template <typename _MOE_METADATA>
-struct MoeRuntimeConfig {
+struct MoeRuntimeConfigImpl {
   using MOE_METADATA = _MOE_METADATA;
   using GEMM_RUNTIME_CONFIG =
       GemmRuntimeConfig<typename MOE_METADATA::TILES_CONFIG>;
@@ -33,4 +33,6 @@ struct MoeRuntimeConfig {
           MOE_METADATA::TILES_CONFIG::FFN2_TILE_METADATA::
               SHARED_MEM_NEEDES_BYTES));
 };
+
+using MoeRuntimeConfig = MoeRuntimeConfigImpl<moe::MoeImplMetadata>;
 }  // namespace moe

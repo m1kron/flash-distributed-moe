@@ -21,38 +21,34 @@ inline __device__ float silu(float a, float b) {
 // Assumption is that output's N dimension equal to 2 * (expertWeights N
 // dimension).
 // Output is returned in register array of size
-// T_OUTPUT_TILE::THREAD_OUTPUT_SIZE;
-template <typename T_OUTPUT_TILE>
+// T_FFN1_TILE::THREAD_OUTPUT_SIZE;
+template <typename T_FFN1_TILE_IMPL>
 __device__ void expertFFN1_block(
-    const typename T_OUTPUT_TILE::TType* __restrict__ tokens,
-    const typename T_OUTPUT_TILE::TType* __restrict__ expertWeights,
-    typename T_OUTPUT_TILE::TType* __restrict__ outRegs, int rowIdx, int colIdx,
-    void* sharedMemPool) {
-  constexpr int N_CHUNKS = T_OUTPUT_TILE::N / T_OUTPUT_TILE::TILE_N;
-
+    const typename T_FFN1_TILE_IMPL::TILE_METADATA::TType* __restrict__ tokens,
+    const typename T_FFN1_TILE_IMPL::TILE_METADATA::
+        TType* __restrict__ expertWeights,
+    typename T_FFN1_TILE_IMPL::TILE_METADATA::TType* __restrict__ outRegs,
+    int rowIdx, int colIdx, void* sharedMemPool) {
   const int tokenIdx = rowIdx;
   const int tileCol = colIdx;
 
-  using T_FFN1_TILE =
-      GemmTileParams<T_OUTPUT_TILE::N * 2, T_OUTPUT_TILE::K,
-                     T_OUTPUT_TILE::TILE_M, T_OUTPUT_TILE::TILE_N,
-                     T_OUTPUT_TILE::TILE_K, T_OUTPUT_TILE::THREADS,
-                     typename T_OUTPUT_TILE::TType>;
-
-  static_assert(T_FFN1_TILE::THREAD_OUTPUT_SIZE ==
-                T_OUTPUT_TILE::THREAD_OUTPUT_SIZE);
+  const typename T_FFN1_TILE_IMPL::TILE_METADATA::TType* expertWeights2 =
+      expertWeights +
+      T_FFN1_TILE_IMPL::TILE_METADATA::K * T_FFN1_TILE_IMPL::TILE_METADATA::N;
 
   // TODO: Fuse gemms.
-  typename T_FFN1_TILE::TType w1_regs[T_FFN1_TILE::THREAD_OUTPUT_SIZE];
-  moe::tasks::internal::GemmTile_block<T_FFN1_TILE>(
-      tokens, expertWeights, w1_regs, tokenIdx, tileCol, sharedMemPool);
+  typename T_FFN1_TILE_IMPL::TILE_METADATA::TType
+      w1_regs[T_FFN1_TILE_IMPL::TILE_METADATA::THREAD_OUTPUT_SIZE];
 
-  moe::tasks::internal::GemmTile_block<T_FFN1_TILE>(
-      tokens, expertWeights, outRegs, tokenIdx, tileCol + N_CHUNKS,
-      sharedMemPool);
+  T_FFN1_TILE_IMPL::Execute(tokens, expertWeights, w1_regs, tokenIdx, tileCol,
+                            sharedMemPool);
+
+  T_FFN1_TILE_IMPL::Execute(tokens, expertWeights2, outRegs, tokenIdx, tileCol,
+                            sharedMemPool);
 
   // Silu:
-  for (int i = 0; i < T_FFN1_TILE::THREAD_OUTPUT_SIZE; ++i) {
+  for (int i = 0; i < T_FFN1_TILE_IMPL::TILE_METADATA::THREAD_OUTPUT_SIZE;
+       ++i) {
     outRegs[i] = silu(w1_regs[i], outRegs[i]);
   }
 }
