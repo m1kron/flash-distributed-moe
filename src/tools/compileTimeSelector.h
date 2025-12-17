@@ -13,6 +13,10 @@ template <typename Last>
 struct CompileTimeSelector<Last> {
   static constexpr bool match = Last::AreAllConstraintsSatisfied();
   using type = std::conditional_t<match, Last, void>;
+
+  static_assert(
+      !std::is_same_v<type, void>,
+      "There is no candidate, for which all constraints are satisfied.");
 };
 
 template <typename First, typename... Rest>
