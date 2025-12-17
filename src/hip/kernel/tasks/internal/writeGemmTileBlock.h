@@ -7,15 +7,15 @@ namespace internal {
 
 // Writes tile output distributed in registers in all participating threads to
 // global mem.
-template <typename GEMM_TILE_PARAMS>
+template <typename GEMM_TILE_METADATA>
 __device__ void WriteGemmTileToGlobalMem_block(
-    const typename GEMM_TILE_PARAMS::TType* __restrict__ outTile_thread_regs,
-    typename GEMM_TILE_PARAMS::TType* __restrict__ out_global,
+    const typename GEMM_TILE_METADATA::TType* __restrict__ outTile_thread_regs,
+    typename GEMM_TILE_METADATA::TType* __restrict__ out_global,
     int blockTileRowStartIdx, int blockTileColStartIdx) {
-  constexpr int OUT_PER_THREAD = GEMM_TILE_PARAMS::THREAD_OUTPUT_SIZE;
-  constexpr int TILE_M = GEMM_TILE_PARAMS::TILE_M;
-  constexpr int TILE_N = GEMM_TILE_PARAMS::TILE_N;
-  constexpr int N = GEMM_TILE_PARAMS::N;
+  constexpr int OUT_PER_THREAD = GEMM_TILE_METADATA::THREAD_OUTPUT_SIZE;
+  constexpr int TILE_M = GEMM_TILE_METADATA::TILE_M;
+  constexpr int TILE_N = GEMM_TILE_METADATA::TILE_N;
+  constexpr int N = GEMM_TILE_METADATA::N;
   const int BLOCK_START_ROW = blockTileRowStartIdx * TILE_M;
   const int BLOCK_START_COL = blockTileColStartIdx * TILE_N;
   const int baseLinear = threadIdx.x * OUT_PER_THREAD;

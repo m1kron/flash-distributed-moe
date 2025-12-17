@@ -7,39 +7,39 @@ namespace internal {
 // Basic(and reference) implementation of moe gem tile.
 // Each implementation has to provide:
 // - NeededSharedMemBytes(), which returns how much shared mem is needed
-// - Supports() which returns true if GEMM_TILE_PARAMS are supported by the
+// - Supports() which returns true if GEMM_TILE_METADATA are supported by the
 // implementation.
 // - execute() which executes gemm.
-template <typename GEMM_TILE_PARAMS>
+template <typename GEMM_TILE_METADATA>
 struct BasicGemmTileImpl {
   // Metadata for the tile.
-  using TILE_METADATA = GEMM_TILE_PARAMS;
+  using TILE_METADATA = GEMM_TILE_METADATA;
 
   // Retruns needed shared mem for this impl.
   static constexpr int NeededSharedMemBytes() {
-    return ((GEMM_TILE_PARAMS::TILE_M * GEMM_TILE_PARAMS::TILE_K) +
-            (GEMM_TILE_PARAMS::TILE_K * GEMM_TILE_PARAMS::TILE_N)) *
-           sizeof(typename GEMM_TILE_PARAMS::TType);
+    return ((GEMM_TILE_METADATA::TILE_M * GEMM_TILE_METADATA::TILE_K) +
+            (GEMM_TILE_METADATA::TILE_K * GEMM_TILE_METADATA::TILE_N)) *
+           sizeof(typename GEMM_TILE_METADATA::TType);
   }
 
-  // Returns true if this implementation actually supports GEMM_TILE_PARAMS.
+  // Returns true if this implementation actually supports GEMM_TILE_METADATA.
   static constexpr bool Supports() { return true; }
 
   // Implementation.
   static __device__ void Execute(
-      const typename GEMM_TILE_PARAMS::TType* __restrict__ A,
-      const typename GEMM_TILE_PARAMS::TType* __restrict__ B,
-      typename GEMM_TILE_PARAMS::TType* __restrict__ CTile_thread_regs,
+      const typename GEMM_TILE_METADATA::TType* __restrict__ A,
+      const typename GEMM_TILE_METADATA::TType* __restrict__ B,
+      typename GEMM_TILE_METADATA::TType* __restrict__ CTile_thread_regs,
       int blockTileRowStartIdx, int blockTileColStartIdx,
       void* __restrict__ sharedMemPool) {
-    using TType = typename GEMM_TILE_PARAMS::TType;
-    constexpr int TILE_M = GEMM_TILE_PARAMS::TILE_M;
-    constexpr int TILE_N = GEMM_TILE_PARAMS::TILE_N;
-    constexpr int K = GEMM_TILE_PARAMS::K;
-    constexpr int N = GEMM_TILE_PARAMS::N;
+    using TType = typename GEMM_TILE_METADATA::TType;
+    constexpr int TILE_M = GEMM_TILE_METADATA::TILE_M;
+    constexpr int TILE_N = GEMM_TILE_METADATA::TILE_N;
+    constexpr int K = GEMM_TILE_METADATA::K;
+    constexpr int N = GEMM_TILE_METADATA::N;
     // tile along K dimension
-    constexpr int TILE_K = GEMM_TILE_PARAMS::TILE_K;
-    constexpr int OUT_PER_THREAD = GEMM_TILE_PARAMS::THREAD_OUTPUT_SIZE;
+    constexpr int TILE_K = GEMM_TILE_METADATA::TILE_K;
+    constexpr int OUT_PER_THREAD = GEMM_TILE_METADATA::THREAD_OUTPUT_SIZE;
     const int BLOCK_START_ROW = blockTileRowStartIdx * TILE_M;
     const int BLOCK_START_COL = blockTileColStartIdx * TILE_N;
 
