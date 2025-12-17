@@ -1,7 +1,8 @@
 #include <hip/hip_runtime.h>
 
 #include "src/hip/common/metadata.h"
-#include "src/hip/kernel/tasks/internal/gemmTileBlock.h"
+#include "src/hip/kernel/tasks/internal/gemmImpl/gemmImplSelector.h"
+#include "src/hip/kernel/tasks/internal/writeGemmTileBlock.h"
 #include "test/cpp/benchmarks/benchmarkUtils.h"
 #include "test/cpp/moe/reference/refGemm.h"
 #include "test/cpp/utils/utils.h"
@@ -13,7 +14,10 @@ template <typename TGEMM_TILE>
 __global__ void batchedGemvKernel(const float* __restrict__ A,
                                   const float* __restrict__ B,
                                   float* __restrict__ output) {
-  __shared__ char sharedMemPool[TGEMM_TILE::SHARED_MEM_NEEDES_BYTES];
+  using GemmImpl =
+      typename moe::tasks::internal::GemmImplSelector<TGEMM_TILE>::type;
+
+  __shared__ char sharedMemPool[GemmImpl::NeededSharedMemBytes()];
 
   constexpr int N_CHUNKS = TGEMM_TILE::N / TGEMM_TILE::TILE_N;
 
@@ -27,9 +31,8 @@ __global__ void batchedGemvKernel(const float* __restrict__ A,
 
   typename TGEMM_TILE::TType out_regs[TGEMM_TILE::THREAD_OUTPUT_SIZE];
 
-  moe::tasks::internal::GemmTile_block<TGEMM_TILE>(
-      thisBlockAPtr, thisBlockBPtr, out_regs, 0, thisBlockTileIdx,
-      sharedMemPool);
+  GemmImpl::Execute(thisBlockAPtr, thisBlockBPtr, out_regs, 0, thisBlockTileIdx,
+                    sharedMemPool);
 
   float* thisBlockOutputPtr = output + thisBlockGemvIdx * TGEMM_TILE::N;
   moe::tasks::internal::WriteGemmTileToGlobalMem_block<TGEMM_TILE>(
@@ -45,16 +48,16 @@ hipError_t batchedGemv(const float* A, const float* B, float* C) {
   // NOTE: We process gemm as many gemv, which simiulates moe case.
   constexpr int M_TILE = 1;
 
-  using TGemmTileParams =
-      GemmTileParams<N, K, M_TILE, N_TILE, K_TILE, THREADS, float>;
+  using TGemmTileMetadata =
+      GemmTileMetadata<N, K, M_TILE, N_TILE, K_TILE, THREADS, float>;
 
   constexpr int N_CHUNKS = N / N_TILE;
   constexpr int TILES_TO_PROCESS = N_CHUNKS * M;
 
   dim3 grid(TILES_TO_PROCESS);
-  dim3 block(TGemmTileParams::THREADS);
+  dim3 block(TGemmTileMetadata::THREADS);
 
-  batchedGemvKernel<TGemmTileParams><<<grid, block, 0, 0>>>(A, B, C);
+  batchedGemvKernel<TGemmTileMetadata><<<grid, block, 0, 0>>>(A, B, C);
 
   return hipSuccess;
 }

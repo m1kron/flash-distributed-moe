@@ -1,33 +1,36 @@
 #include <hip/hip_runtime.h>
 
-#include "src/hip/common/metadata.h"
+#include "src/hip/common/runtimeConfig.h"
 #include "src/hip/kernel/tasks/internal/gateBlock.h"
+#include "src/hip/kernel/tasks/internal/gemmImpl/gemmImplSelector.h"
 #include "test/cpp/moe/reference/refMoeGate.h"
 #include "test/cpp/utils/utils.h"
 
 namespace {
 constexpr int M_SIZE = 48;
-constexpr int N_SIZE = moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::EXPERTS_NUM;
-constexpr int K_SIZE = moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::HIDDEN_SIZE;
-constexpr int TOPK = moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::TOPK;
-constexpr int THREADS = moe::MoeImplMetadata::HW_CONFIG::THREADS;
-constexpr int BLOCKS = moe::MoeImplMetadata::HW_CONFIG::BLOCKS;
+constexpr int N_SIZE =
+    moe::MoeRuntimeConfig::MOE_METADATA::MOE_PROBLEM_CONFIG::EXPERTS_NUM;
+constexpr int K_SIZE =
+    moe::MoeRuntimeConfig::MOE_METADATA::MOE_PROBLEM_CONFIG::HIDDEN_SIZE;
+constexpr int TOPK =
+    moe::MoeRuntimeConfig::MOE_METADATA::MOE_PROBLEM_CONFIG::TOPK;
+constexpr int THREADS = moe::MoeRuntimeConfig::MOE_METADATA::HW_CONFIG::THREADS;
+constexpr int BLOCKS = moe::MoeRuntimeConfig::MOE_METADATA::HW_CONFIG::BLOCKS;
+using T_GATE_TILE_IMPL =
+    moe::MoeRuntimeConfig::GEMM_RUNTIME_CONFIG::GATE_GEMM_TILE_IMPL;
 
-using T_GATE_TILE_METADATA =
-    moe::MoeImplMetadata::TILES_CONFIG::GATE_TILE_METADATA;
-
-template <typename TGEMM_TILE>
+template <typename TILE_GEMM_IMPL>
 __global__ void moeGateKernel(const float* __restrict__ tokens,
                               const float* __restrict__ gateWeights,
                               float* __restrict__ topkVals,
                               int* __restrict__ topIdx, int M_SIZE) {
-  __shared__ char sharedMemPool[TGEMM_TILE::SHARED_MEM_NEEDES_BYTES];
+  __shared__ char sharedMemPool[TILE_GEMM_IMPL::NeededSharedMemBytes()];
 
   for (int tokenIdx = blockIdx.x; tokenIdx < M_SIZE; tokenIdx += gridDim.x) {
     float* topkVals_shared = nullptr;
     int* topkIdx_shared = nullptr;
 
-    moe::tasks::internal::gate_block<TGEMM_TILE, TOPK>(
+    moe::tasks::internal::gate_block<TILE_GEMM_IMPL, TOPK>(
         tokens, gateWeights, tokenIdx, &topkVals_shared, &topkIdx_shared,
         sharedMemPool);
 
@@ -50,7 +53,7 @@ hipError_t moeGate(const float* A, const float* B, float* topkVals,
   dim3 grid(BLOCKS);
   dim3 block(THREADS);
 
-  moeGateKernel<T_GATE_TILE_METADATA>
+  moeGateKernel<T_GATE_TILE_IMPL>
       <<<grid, block, 0, 0>>>(A, B, topkVals, topkIdx, M);
 
   return hipSuccess;

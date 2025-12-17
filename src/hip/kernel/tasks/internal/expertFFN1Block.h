@@ -1,6 +1,5 @@
 #pragma once
-#include "gemmTileBlock.h"
-
+#include "src/hip/utils/hipDeviceUtils.h"
 namespace moe {
 namespace tasks {
 namespace internal {
@@ -21,38 +20,32 @@ inline __device__ float silu(float a, float b) {
 // Assumption is that output's N dimension equal to 2 * (expertWeights N
 // dimension).
 // Output is returned in register array of size
-// T_OUTPUT_TILE::THREAD_OUTPUT_SIZE;
-template <typename T_OUTPUT_TILE>
+// T_FFN1_TILE::THREAD_OUTPUT_SIZE;
+template <typename T_FFN1_TILE_IMPL>
 __device__ void expertFFN1_block(
-    const typename T_OUTPUT_TILE::TType* __restrict__ tokens,
-    const typename T_OUTPUT_TILE::TType* __restrict__ expertWeights,
-    typename T_OUTPUT_TILE::TType* __restrict__ outRegs, int rowIdx, int colIdx,
-    void* sharedMemPool) {
-  constexpr int N_CHUNKS = T_OUTPUT_TILE::N / T_OUTPUT_TILE::TILE_N;
+    const typename T_FFN1_TILE_IMPL::TILE_METADATA::TType* __restrict__ tokens,
+    const typename T_FFN1_TILE_IMPL::TILE_METADATA::
+        TType* __restrict__ expertWeights,
+    typename T_FFN1_TILE_IMPL::TILE_METADATA::TType* __restrict__ outRegs,
+    int rowIdx, int colIdx, void* sharedMemPool) {
+  HIP_DEVICE_ASSERT(rowIdx == 0);
 
-  const int tokenIdx = rowIdx;
-  const int tileCol = colIdx;
+  using FFN1_TILE = typename T_FFN1_TILE_IMPL::TILE_METADATA;
 
-  using T_FFN1_TILE =
-      GemmTileParams<T_OUTPUT_TILE::N * 2, T_OUTPUT_TILE::K,
-                     T_OUTPUT_TILE::TILE_M, T_OUTPUT_TILE::TILE_N,
-                     T_OUTPUT_TILE::TILE_K, T_OUTPUT_TILE::THREADS,
-                     typename T_OUTPUT_TILE::TType>;
-
-  static_assert(T_FFN1_TILE::THREAD_OUTPUT_SIZE ==
-                T_OUTPUT_TILE::THREAD_OUTPUT_SIZE);
+  const typename FFN1_TILE::TType* expertWeights2 =
+      expertWeights + FFN1_TILE::K * FFN1_TILE::N;
 
   // TODO: Fuse gemms.
-  typename T_FFN1_TILE::TType w1_regs[T_FFN1_TILE::THREAD_OUTPUT_SIZE];
-  moe::tasks::internal::GemmTile_block<T_FFN1_TILE>(
-      tokens, expertWeights, w1_regs, tokenIdx, tileCol, sharedMemPool);
+  typename FFN1_TILE::TType w1_regs[FFN1_TILE::THREAD_OUTPUT_SIZE];
 
-  moe::tasks::internal::GemmTile_block<T_FFN1_TILE>(
-      tokens, expertWeights, outRegs, tokenIdx, tileCol + N_CHUNKS,
-      sharedMemPool);
+  T_FFN1_TILE_IMPL::Execute(tokens, expertWeights, w1_regs, 0, colIdx,
+                            sharedMemPool);
+
+  T_FFN1_TILE_IMPL::Execute(tokens, expertWeights2, outRegs, 0, colIdx,
+                            sharedMemPool);
 
   // Silu:
-  for (int i = 0; i < T_FFN1_TILE::THREAD_OUTPUT_SIZE; ++i) {
+  for (int i = 0; i < FFN1_TILE::THREAD_OUTPUT_SIZE; ++i) {
     outRegs[i] = silu(w1_regs[i], outRegs[i]);
   }
 }

@@ -1,4 +1,5 @@
 #include "moeKernelLauncher.h"
+#include "src/hip/common/runtimeConfig.h"
 #include "src/hip/hipHostCommon.h"
 #include "src/hip/kernel/moeKernel.h"
 
@@ -51,10 +52,11 @@ int GetExpectedNumOfTasks(int tokensNum) {
   return GetExpectedNumOfTasksForOneToken<MOE_METADATA>() * tokensNum;
 }
 
-template <typename MOE_METADATA>
+template <typename MOE_RUNTIME_CONFIG>
 hipError_t moeKernelLaunchFunc(InternalState* state, const void* tokens,
                                void* output, int tokensNum,
                                hipStream_t stream) {
+  using MOE_METADATA = typename MOE_RUNTIME_CONFIG::MOE_METADATA;
   using TMoeDataType = typename MOE_METADATA::MOE_PROBLEM_CONFIG::TDataType;
   dim3 grid(MOE_METADATA::HW_CONFIG::BLOCKS * state->maxBlocksPerSM);
   dim3 block(MOE_METADATA::HW_CONFIG::THREADS);
@@ -75,7 +77,7 @@ hipError_t moeKernelLaunchFunc(InternalState* state, const void* tokens,
                          MOE_METADATA::TILES_CONFIG::REDUCTION_CHUNKS_PER_TOKEN,
                      stream));
 
-  moeKernel<MOE_METADATA><<<grid, block, 0, stream>>>(
+  moeKernel<MOE_RUNTIME_CONFIG><<<grid, block, 0, stream>>>(
       static_cast<const TMoeDataType*>(tokens),
       static_cast<const TMoeDataType*>(state->gateWeights),
       static_cast<const TMoeDataType*>(state->ffn1ExpertWeights),
@@ -99,7 +101,7 @@ hipError_t MoeKernelLauncher::Init(const void* gateWeights,
   m_internalState->ffn2ExpertWeights = ffn2ExpertWeights;
 
   HIP_ERROR_CHECK(hipOccupancyMaxActiveBlocksPerMultiprocessor(
-      &m_internalState->maxBlocksPerSM, moeKernel<moe::MoeImplMetadata>,
+      &m_internalState->maxBlocksPerSM, moeKernel<moe::MoeRuntimeConfig>,
       moe::MoeImplMetadata::HW_CONFIG::THREADS, 0));
   MOE_LOG("Calculated max block per sm: %i", m_internalState->maxBlocksPerSM);
 
@@ -190,7 +192,7 @@ hipError_t MoeKernelLauncher::Deinit(hipStream_t stream) {
 ////////////////////////////////////////////////////////////////
 hipError_t MoeKernelLauncher::Launch(const void* tokens, void* output,
                                      int tokensNum, hipStream_t stream) {
-  HIP_ERROR_CHECK(moeKernelLaunchFunc<moe::MoeImplMetadata>(
+  HIP_ERROR_CHECK(moeKernelLaunchFunc<moe::MoeRuntimeConfig>(
       m_internalState, tokens, output, tokensNum, stream));
   return hipSuccess;
 }

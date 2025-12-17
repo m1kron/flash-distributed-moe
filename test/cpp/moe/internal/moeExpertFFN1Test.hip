@@ -1,8 +1,9 @@
 #include <hip/hip_runtime.h>
 
-#include "src/hip/common/metadata.h"
+#include "src/hip/common/runtimeConfig.h"
 #include "src/hip/hipHostCommon.h"
 #include "src/hip/kernel/tasks/internal/expertFFN1Block.h"
+#include "src/hip/kernel/tasks/internal/writeGemmTileBlock.h"
 #include "src/hip/utils/hipDeviceUtils.h"
 #include "test/cpp/moe/reference/refExpertFFN1.h"
 #include "test/cpp/utils/utils.h"
@@ -10,32 +11,34 @@
 namespace {
 constexpr int TOKENS_NUM = 48;
 constexpr int HIDDEN_SIZE =
-    moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::HIDDEN_SIZE;
-constexpr int EXPERT_INTERMEDIATE_SIZE =
-    moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::EXPERT_INTERMEDIATE_SIZE;
+    moe::MoeRuntimeConfig::MOE_METADATA::MOE_PROBLEM_CONFIG::HIDDEN_SIZE;
+constexpr int EXPERT_INTERMEDIATE_SIZE = moe::MoeRuntimeConfig::MOE_METADATA::
+    MOE_PROBLEM_CONFIG::EXPERT_INTERMEDIATE_SIZE;
 
 constexpr float ABS_ERROR = 1e-4f;
 
-using TExpertGemmTileParams =
-    moe::MoeImplMetadata::TILES_CONFIG::FFN1_TILE_METADATA;
+using FFN1_GEMM_TILE_IMPL =
+    moe::MoeRuntimeConfig::GEMM_RUNTIME_CONFIG::FFN1_GEMM_TILE_IMPL;
 
 __global__ void hipExpertFFN1Kernel(const float* __restrict__ tokens,
                                     const float* __restrict__ expertWeights,
                                     float* __restrict__ output) {
-  __shared__ char sharedMemPool[TExpertGemmTileParams::SHARED_MEM_NEEDES_BYTES];
+  __shared__ char sharedMemPool[FFN1_GEMM_TILE_IMPL::NeededSharedMemBytes()];
 
-  constexpr int N_CHUNKS =
-      TExpertGemmTileParams::N / TExpertGemmTileParams::TILE_N;
+  constexpr int N_CHUNKS = FFN1_GEMM_TILE_IMPL::TILE_METADATA::N /
+                           FFN1_GEMM_TILE_IMPL::TILE_METADATA::TILE_N;
 
   const int tokenIdx = blockIdx.x / N_CHUNKS;
   const int tileCol = blockIdx.x % N_CHUNKS;
 
-  typename TExpertGemmTileParams::TType
-      outRegs[TExpertGemmTileParams::THREAD_OUTPUT_SIZE];
-  moe::tasks::internal::expertFFN1_block<TExpertGemmTileParams>(
-      tokens, expertWeights, outRegs, tokenIdx, tileCol, sharedMemPool);
-  moe::tasks::internal::WriteGemmTileToGlobalMem_block<TExpertGemmTileParams>(
-      outRegs, output, tokenIdx, tileCol);
+  const float* thisBlockTokens = tokens + tokenIdx * HIDDEN_SIZE;
+
+  typename FFN1_GEMM_TILE_IMPL::TILE_METADATA::TType
+      outRegs[FFN1_GEMM_TILE_IMPL::TILE_METADATA::THREAD_OUTPUT_SIZE];
+  moe::tasks::internal::expertFFN1_block<FFN1_GEMM_TILE_IMPL>(
+      thisBlockTokens, expertWeights, outRegs, 0, tileCol, sharedMemPool);
+  moe::tasks::internal::WriteGemmTileToGlobalMem_block<
+      FFN1_GEMM_TILE_IMPL::TILE_METADATA>(outRegs, output, tokenIdx, tileCol);
 }
 
 static hipError_t hipExpertFFN1(const float* tokens, const float* expertWeights,
@@ -44,9 +47,9 @@ static hipError_t hipExpertFFN1(const float* tokens, const float* expertWeights,
   assert(hiddenSize == HIDDEN_SIZE);
   assert(tokensNum == TOKENS_NUM);
   assert(expertIntermediateSize == EXPERT_INTERMEDIATE_SIZE);
-  dim3 grid(tokensNum *
-            (expertIntermediateSize / TExpertGemmTileParams::TILE_N));
-  dim3 block(TExpertGemmTileParams::THREADS);
+  dim3 grid(tokensNum * (expertIntermediateSize /
+                         FFN1_GEMM_TILE_IMPL::TILE_METADATA::TILE_N));
+  dim3 block(FFN1_GEMM_TILE_IMPL::TILE_METADATA::THREADS);
   hipExpertFFN1Kernel<<<grid, block, 0, 0>>>(tokens, expertWeights, output);
 
   return hipSuccess;

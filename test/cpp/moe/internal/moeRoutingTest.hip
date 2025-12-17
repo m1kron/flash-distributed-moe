@@ -1,8 +1,9 @@
 #include <hip/hip_runtime.h>
 
-#include "src/hip/common/metadata.h"
+#include "src/hip/common/runtimeConfig.h"
 #include "src/hip/hipHostCommon.h"
 #include "src/hip/kernel/tasks/internal/gateBlock.h"
+#include "src/hip/kernel/tasks/internal/writeGemmTileBlock.h"
 #include "src/hip/taskSystem/taskManager.h"
 #include "src/hip/taskSystem/workerLoop.h"
 #include "src/hip/utils/hipDeviceUtils.h"
@@ -23,11 +24,11 @@ constexpr int BLOCKS = moe::MoeImplMetadata::HW_CONFIG::BLOCKS;
 constexpr int EXPERT_TILE_SIZE =
     moe::MoeImplMetadata::TILES_CONFIG::EXPERTS_N_TILE_SIZE;
 
-using TGateGemmTileParams =
-    moe::MoeImplMetadata::TILES_CONFIG::GATE_TILE_METADATA;
+using TGateGemmTileImpl =
+    moe::MoeRuntimeConfig::GEMM_RUNTIME_CONFIG::GATE_GEMM_TILE_IMPL;
 
-using TExpertGemmTileParams =
-    moe::MoeImplMetadata::TILES_CONFIG::FFN1_TILE_METADATA;
+using TExpertGemmTileImpl =
+    moe::MoeRuntimeConfig::GEMM_RUNTIME_CONFIG::FFN1_GEMM_TILE_IMPL;
 
 // Custom task for this test.
 struct __align__(16) ExpertTileTask {
@@ -44,24 +45,17 @@ struct __align__(16) ExpertTileTask {
 using TaskManagerType = TaskManager<ExpertTileTask, 8192>;
 static __constant__ TaskManagerType globalTaskManager;
 
-template <typename T_EXPERT_TILE>
+template <typename T_EXPERT_IMPL>
 __device__ void ExecuteTask(const ExpertTileTask& task, void* sharedMemPool) {
-  if (threadIdx.x == 65) {
-    HIP_DEVICE_LOG(
-        "Worker %i: Executes tile no: %i, tokenIdx: %i, expert: %i, weight: "
-        "%f\n",
-        blockIdx.x, task.blockTileColStartIdx, task.tokenIdx, task.expertIdx,
-        task.expertWeight);
-  }
+  using T_EXPERT_TILE = typename T_EXPERT_IMPL::TILE_METADATA;
 
   const float* thisBlockTokens = task.tokens + task.tokenIdx * T_EXPERT_TILE::K;
   const float* thisExpertWeights =
       task.expertWeights + task.expertIdx * T_EXPERT_TILE::K * T_EXPERT_TILE::N;
 
   typename T_EXPERT_TILE::TType out_regs[T_EXPERT_TILE::THREAD_OUTPUT_SIZE];
-  moe::tasks::internal::GemmTile_block<T_EXPERT_TILE>(
-      thisBlockTokens, thisExpertWeights, out_regs, 0,
-      task.blockTileColStartIdx, sharedMemPool);
+  T_EXPERT_IMPL::Execute(thisBlockTokens, thisExpertWeights, out_regs, 0,
+                         task.blockTileColStartIdx, sharedMemPool);
 
   float* thisBlockOutput = task.output +
                            task.tokenIdx * TOPK * (T_EXPERT_TILE::N + 2) +
@@ -80,16 +74,17 @@ __device__ void ExecuteTask(const ExpertTileTask& task, void* sharedMemPool) {
       out_regs, thisBlockOutput, 0, task.blockTileColStartIdx);
 }
 
-template <typename T_GATE_TILE, typename T_EXPERT_TILE>
+template <typename T_GATE_IMPL, typename T_EXPERT_IMPL>
 __global__ void refRoutingKernel(const float* __restrict__ tokens,
                                  const float* __restrict__ gateWeights,
                                  const float* __restrict__ expertWeights,
                                  float* __restrict__ output, int TOKENS_NUM) {
   constexpr int SHARED_MEM_SIZE_BYTES =
-      T_GATE_TILE::SHARED_MEM_NEEDES_BYTES >
-              T_EXPERT_TILE::SHARED_MEM_NEEDES_BYTES
-          ? T_GATE_TILE::SHARED_MEM_NEEDES_BYTES
-          : T_EXPERT_TILE::SHARED_MEM_NEEDES_BYTES;
+      T_GATE_IMPL::NeededSharedMemBytes() >
+              T_EXPERT_IMPL::NeededSharedMemBytes()
+          ? T_GATE_IMPL::NeededSharedMemBytes()
+          : T_EXPERT_IMPL::NeededSharedMemBytes();
+
   __shared__ char sharedMemPool[SHARED_MEM_SIZE_BYTES];
 
   for (int tokenIdx = blockIdx.x; tokenIdx < TOKENS_NUM;
@@ -97,7 +92,7 @@ __global__ void refRoutingKernel(const float* __restrict__ tokens,
     float* topkVals_shared = nullptr;
     int* topkIdx_shared = nullptr;
 
-    moe::tasks::internal::gate_block<T_GATE_TILE, TOPK>(
+    moe::tasks::internal::gate_block<T_GATE_IMPL, TOPK>(
         tokens, gateWeights, tokenIdx, &topkVals_shared, &topkIdx_shared,
         sharedMemPool);
 
@@ -112,7 +107,8 @@ __global__ void refRoutingKernel(const float* __restrict__ tokens,
       rTask.expertWeight = topkVals_shared[i];
       rTask.topkSlotIdx = i;
 
-      constexpr int EXPERT_CHUNKS = T_EXPERT_TILE::N / T_EXPERT_TILE::TILE_N;
+      constexpr int EXPERT_CHUNKS = T_EXPERT_IMPL::TILE_METADATA::N /
+                                    T_EXPERT_IMPL::TILE_METADATA::TILE_N;
 #pragma unroll
       for (int j = 0; j < EXPERT_CHUNKS; ++j) {
         rTask.blockTileColStartIdx = j;
@@ -121,7 +117,7 @@ __global__ void refRoutingKernel(const float* __restrict__ tokens,
     }
   }
 
-  workerTaskSystemLoop_block(globalTaskManager, ExecuteTask<T_EXPERT_TILE>,
+  workerTaskSystemLoop_block(globalTaskManager, ExecuteTask<T_EXPERT_IMPL>,
                              sharedMemPool);
 }
 
@@ -133,7 +129,7 @@ static hipError_t refHipRouting(const float* tokens, const float* gateWeights,
   assert(expertsNum == EXPERTS_NUM);
 
   dim3 grid(BLOCKS);
-  dim3 block(TGateGemmTileParams::THREADS);
+  dim3 block(TGateGemmTileImpl::TILE_METADATA::THREADS);
 
   hipStream_t stream = 0;
   TaskManagerType managerHost;
@@ -146,7 +142,7 @@ static hipError_t refHipRouting(const float* tokens, const float* gateWeights,
                                          &managerHost, sizeof(TaskManagerType),
                                          0, hipMemcpyHostToDevice, stream));
 
-  refRoutingKernel<TGateGemmTileParams, TExpertGemmTileParams>
+  refRoutingKernel<TGateGemmTileImpl, TExpertGemmTileImpl>
       <<<grid, block, 0, 0>>>(tokens, gateWeights, expertWeights, output,
                               tokensNum);
 
