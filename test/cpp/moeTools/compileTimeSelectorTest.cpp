@@ -9,21 +9,21 @@ struct params {
 
 template <typename PARAMS>
 struct Bla1 {
-  static constexpr bool Supports() { return true; }
+  static constexpr bool AreAllConstraintsSatisfied() { return true; }
 
   int type() { return 1; }
 };
 
 template <typename PARAMS>
 struct Bla2 {
-  static constexpr bool Supports() { return PARAMS::N == 1; }
+  static constexpr bool AreAllConstraintsSatisfied() { return PARAMS::N == 1; }
 
   int type() { return 2; }
 };
 
 template <typename PARAMS>
 struct Bla3 {
-  static constexpr bool Supports() { return PARAMS::N == 2; }
+  static constexpr bool AreAllConstraintsSatisfied() { return PARAMS::N == 2; }
 
   int type() { return 3; }
 };

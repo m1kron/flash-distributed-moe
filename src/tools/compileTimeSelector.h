@@ -4,20 +4,20 @@
 namespace moe {
 namespace tools {
 
-// Compile time selector select the first Candidate, for which Supports returns
-// true.
+// Compile time selector select the first Candidate, for which
+// AreAllConstraintsSatisfied() returns true.
 template <typename... Candidates>
 struct CompileTimeSelector;
 
 template <typename Last>
 struct CompileTimeSelector<Last> {
-  static constexpr bool match = Last::Supports();
+  static constexpr bool match = Last::AreAllConstraintsSatisfied();
   using type = std::conditional_t<match, Last, void>;
 };
 
 template <typename First, typename... Rest>
 struct CompileTimeSelector<First, Rest...> {
-  static constexpr bool match = First::Supports();
+  static constexpr bool match = First::AreAllConstraintsSatisfied();
   using type = std::conditional_t<match, First,
                                   typename CompileTimeSelector<Rest...>::type>;
 };

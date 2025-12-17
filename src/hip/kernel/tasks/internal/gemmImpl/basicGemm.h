@@ -7,7 +7,7 @@ namespace internal {
 // Basic(and reference) implementation of moe gem tile.
 // Each implementation has to provide:
 // - NeededSharedMemBytes(), which returns how much shared mem is needed
-// - Supports() which returns true if GEMM_TILE_METADATA are supported by the
+// - AreAllConstraintsSatisfied() which returns true if GEMM_TILE_METADATA are supported by the
 // implementation.
 // - execute() which executes gemm.
 template <typename GEMM_TILE_METADATA>
@@ -23,7 +23,7 @@ struct BasicGemmTileImpl {
   }
 
   // Returns true if this implementation actually supports GEMM_TILE_METADATA.
-  static constexpr bool Supports() { return true; }
+  static constexpr bool AreAllConstraintsSatisfied() { return true; }
 
   // Implementation.
   static __device__ void Execute(
