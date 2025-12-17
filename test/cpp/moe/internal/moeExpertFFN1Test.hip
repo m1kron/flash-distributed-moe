@@ -31,10 +31,12 @@ __global__ void hipExpertFFN1Kernel(const float* __restrict__ tokens,
   const int tokenIdx = blockIdx.x / N_CHUNKS;
   const int tileCol = blockIdx.x % N_CHUNKS;
 
+  const float* thisBlockTokens = tokens + tokenIdx * HIDDEN_SIZE;
+
   typename FFN1_GEMM_TILE_IMPL::TILE_METADATA::TType
       outRegs[FFN1_GEMM_TILE_IMPL::TILE_METADATA::THREAD_OUTPUT_SIZE];
   moe::tasks::internal::expertFFN1_block<FFN1_GEMM_TILE_IMPL>(
-      tokens, expertWeights, outRegs, tokenIdx, tileCol, sharedMemPool);
+      thisBlockTokens, expertWeights, outRegs, 0, tileCol, sharedMemPool);
   moe::tasks::internal::WriteGemmTileToGlobalMem_block<
       FFN1_GEMM_TILE_IMPL::TILE_METADATA>(outRegs, output, tokenIdx, tileCol);
 }

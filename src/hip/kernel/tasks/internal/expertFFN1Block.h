@@ -1,4 +1,5 @@
 #pragma once
+#include "src/hip/utils/hipDeviceUtils.h"
 namespace moe {
 namespace tasks {
 namespace internal {
@@ -27,26 +28,24 @@ __device__ void expertFFN1_block(
         TType* __restrict__ expertWeights,
     typename T_FFN1_TILE_IMPL::TILE_METADATA::TType* __restrict__ outRegs,
     int rowIdx, int colIdx, void* sharedMemPool) {
-  const int tokenIdx = rowIdx;
-  const int tileCol = colIdx;
+  HIP_DEVICE_ASSERT(rowIdx == 0);
 
-  const typename T_FFN1_TILE_IMPL::TILE_METADATA::TType* expertWeights2 =
-      expertWeights +
-      T_FFN1_TILE_IMPL::TILE_METADATA::K * T_FFN1_TILE_IMPL::TILE_METADATA::N;
+  using FFN1_TILE = typename T_FFN1_TILE_IMPL::TILE_METADATA;
+
+  const typename FFN1_TILE::TType* expertWeights2 =
+      expertWeights + FFN1_TILE::K * FFN1_TILE::N;
 
   // TODO: Fuse gemms.
-  typename T_FFN1_TILE_IMPL::TILE_METADATA::TType
-      w1_regs[T_FFN1_TILE_IMPL::TILE_METADATA::THREAD_OUTPUT_SIZE];
+  typename FFN1_TILE::TType w1_regs[FFN1_TILE::THREAD_OUTPUT_SIZE];
 
-  T_FFN1_TILE_IMPL::Execute(tokens, expertWeights, w1_regs, tokenIdx, tileCol,
+  T_FFN1_TILE_IMPL::Execute(tokens, expertWeights, w1_regs, 0, colIdx,
                             sharedMemPool);
 
-  T_FFN1_TILE_IMPL::Execute(tokens, expertWeights2, outRegs, tokenIdx, tileCol,
+  T_FFN1_TILE_IMPL::Execute(tokens, expertWeights2, outRegs, 0, colIdx,
                             sharedMemPool);
 
   // Silu:
-  for (int i = 0; i < T_FFN1_TILE_IMPL::TILE_METADATA::THREAD_OUTPUT_SIZE;
-       ++i) {
+  for (int i = 0; i < FFN1_TILE::THREAD_OUTPUT_SIZE; ++i) {
     outRegs[i] = silu(w1_regs[i], outRegs[i]);
   }
 }

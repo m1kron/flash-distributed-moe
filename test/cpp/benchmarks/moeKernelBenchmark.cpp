@@ -2,19 +2,18 @@
 
 #include "gtest/gtest.h"
 #include "include/iMoeKernelLauncher.h"
+#include "src/hip/common/metadata.h"
 #include "test/cpp/benchmarks/benchmarkUtils.h"
 #include "test/cpp/utils/utils.h"
 
 namespace {
 constexpr float ERROR_ABS = 1e-5f;
-constexpr int EXPERTS_NUM = 128;
-constexpr int HIDDEN_SIZE = 2048;
-constexpr int EXPERT_INTERMEDIATE_SIZE = 768;
-constexpr int TOPK = 8;
-constexpr int THREADS = 128;
-constexpr int BLOCKS = 304;
-constexpr int REDUCTION_TILE_SIZE = 512;
-constexpr int REDUCTION_CHUNKS_PER_TOKEN = (HIDDEN_SIZE / REDUCTION_TILE_SIZE);
+constexpr int EXPERTS_NUM =
+    moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::EXPERTS_NUM;
+constexpr int HIDDEN_SIZE =
+    moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::HIDDEN_SIZE;
+constexpr int EXPERT_INTERMEDIATE_SIZE =
+    moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::EXPERT_INTERMEDIATE_SIZE;
 
 hipError_t run(moe::IMoeKernelLauncher* launcher, const void* tokens,
                void* output, int tokensNum, hipStream_t stream) {
