@@ -10,6 +10,7 @@ namespace internal {
 // - AreAllConstraintsSatisfied() which returns true if GEMM_TILE_METADATA are
 // supported by the implementation.
 // - execute() which executes gemm.
+// - using TILE_METADATA = GEMM_TILE_METADATA;
 template <typename GEMM_TILE_METADATA>
 struct BasicGemmTileImpl {
   // Metadata for the tile.
@@ -17,29 +18,29 @@ struct BasicGemmTileImpl {
 
   // Retruns needed shared mem for this impl.
   static constexpr int NeededSharedMemBytes() {
-    return ((GEMM_TILE_METADATA::TILE_M * GEMM_TILE_METADATA::TILE_K) +
-            (GEMM_TILE_METADATA::TILE_K * GEMM_TILE_METADATA::TILE_N)) *
-           sizeof(typename GEMM_TILE_METADATA::TType);
+    return ((TILE_METADATA::TILE_M * TILE_METADATA::TILE_K) +
+            (TILE_METADATA::TILE_K * TILE_METADATA::TILE_N)) *
+           sizeof(typename TILE_METADATA::TType);
   }
 
-  // Returns true if this implementation actually supports GEMM_TILE_METADATA.
+  // Returns true if this implementation actually supports TILE_METADATA.
   static constexpr bool AreAllConstraintsSatisfied() { return true; }
 
   // Implementation.
   static __device__ void Execute(
-      const typename GEMM_TILE_METADATA::TType* __restrict__ A,
-      const typename GEMM_TILE_METADATA::TType* __restrict__ B,
-      typename GEMM_TILE_METADATA::TType* __restrict__ CTile_thread_regs,
+      const typename TILE_METADATA::TType* __restrict__ A,
+      const typename TILE_METADATA::TType* __restrict__ B,
+      typename TILE_METADATA::TType* __restrict__ CTile_thread_regs,
       int blockTileRowStartIdx, int blockTileColStartIdx,
       void* __restrict__ sharedMemPool) {
-    using TType = typename GEMM_TILE_METADATA::TType;
-    constexpr int TILE_M = GEMM_TILE_METADATA::TILE_M;
-    constexpr int TILE_N = GEMM_TILE_METADATA::TILE_N;
-    constexpr int K = GEMM_TILE_METADATA::K;
-    constexpr int N = GEMM_TILE_METADATA::N;
+    using TType = typename TILE_METADATA::TType;
+    constexpr int TILE_M = TILE_METADATA::TILE_M;
+    constexpr int TILE_N = TILE_METADATA::TILE_N;
+    constexpr int K = TILE_METADATA::K;
+    constexpr int N = TILE_METADATA::N;
     // tile along K dimension
-    constexpr int TILE_K = GEMM_TILE_METADATA::TILE_K;
-    constexpr int OUT_PER_THREAD = GEMM_TILE_METADATA::THREAD_OUTPUT_SIZE;
+    constexpr int TILE_K = TILE_METADATA::TILE_K;
+    constexpr int OUT_PER_THREAD = TILE_METADATA::THREAD_OUTPUT_SIZE;
     const int BLOCK_START_ROW = blockTileRowStartIdx * TILE_M;
     const int BLOCK_START_COL = blockTileColStartIdx * TILE_N;
 
