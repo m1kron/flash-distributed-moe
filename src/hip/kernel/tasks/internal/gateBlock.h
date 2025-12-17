@@ -25,8 +25,9 @@ __device__ void gate_block(
 
   TType out_regs[T_GATE_GEMM_TILE::THREAD_OUTPUT_SIZE];
 
-  T_GATE_GEMM_IMPL::Execute(tokens, gateWeights, out_regs, tokenIdx, 0,
-                            sharedMemPool);
+  const TType* token = tokens + tokenIdx * T_GATE_GEMM_TILE::K;
+
+  T_GATE_GEMM_IMPL::Execute(token, gateWeights, out_regs, 0, 0, sharedMemPool);
   out_regs[0] =
       moe::tasks::internal::Softmax_block<T_GATE_GEMM_TILE::THREADS, TType>(
           out_regs[0], sharedMemPool);
