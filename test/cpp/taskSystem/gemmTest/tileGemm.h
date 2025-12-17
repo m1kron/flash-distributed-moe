@@ -8,10 +8,10 @@ constexpr int THREADS = 128;
 
 template <int N>
 struct TestTileGemm {
-  using TGemmTileParams =
-      GemmTileParams<N, 2048, TILE_M, TILE_N, 32, THREADS, float>;
+  using TGemmTileMetadata =
+      GemmTileMetadata<N, 2048, TILE_M, TILE_N, 32, THREADS, float>;
   using GemmImpl =
-      typename moe::tasks::internal::GemmImplSelector<TGemmTileParams>::type;
+      typename moe::tasks::internal::GemmImplSelector<TGemmTileMetadata>::type;
 
   static constexpr int SHARED_MEM_NEEDES_BYTES =
       GemmImpl::NeededSharedMemBytes();

@@ -1,9 +1,8 @@
 #pragma once
 
-// gemm tile metadata.
 template <int _N, int _K, int _TILE_M, int _TILE_N, int _TILE_K, int _THREADS,
           typename _TType>
-struct GemmTileParams {
+struct GemmTileMetadata {
   using TType = _TType;
   constexpr static int N = _N;
   constexpr static int K = _K;

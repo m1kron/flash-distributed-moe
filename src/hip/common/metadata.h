@@ -28,22 +28,23 @@ struct TilesConfig {
   static constexpr int TILE_K_SIZE = 32;
   static constexpr int TILE_M_SIZE = 1;
 
-  using GATE_TILE_METADATA = GemmTileParams<
+  using GATE_TILE_METADATA = GemmTileMetadata<
       MOE_PROBLEM_CONFIG::EXPERTS_NUM, MOE_PROBLEM_CONFIG::HIDDEN_SIZE,
       TILE_M_SIZE, MOE_PROBLEM_CONFIG::EXPERTS_NUM, TILE_K_SIZE,
       HW_CONFIG::THREADS, typename MOE_PROBLEM_CONFIG::TDataType>;
 
   using FFN1_TILE_METADATA =
-      GemmTileParams<MOE_PROBLEM_CONFIG::EXPERT_INTERMEDIATE_SIZE,
-                     MOE_PROBLEM_CONFIG::HIDDEN_SIZE, TILE_M_SIZE,
-                     EXPERTS_N_TILE_SIZE, TILE_K_SIZE, HW_CONFIG::THREADS,
-                     typename MOE_PROBLEM_CONFIG::TDataType>;
+      GemmTileMetadata<MOE_PROBLEM_CONFIG::EXPERT_INTERMEDIATE_SIZE,
+                       MOE_PROBLEM_CONFIG::HIDDEN_SIZE, TILE_M_SIZE,
+                       EXPERTS_N_TILE_SIZE, TILE_K_SIZE, HW_CONFIG::THREADS,
+                       typename MOE_PROBLEM_CONFIG::TDataType>;
 
   using FFN2_TILE_METADATA =
-      GemmTileParams<MOE_PROBLEM_CONFIG::HIDDEN_SIZE,
-                     MOE_PROBLEM_CONFIG::EXPERT_INTERMEDIATE_SIZE, TILE_M_SIZE,
-                     EXPERTS_N_TILE_SIZE, TILE_K_SIZE, HW_CONFIG::THREADS,
-                     typename MOE_PROBLEM_CONFIG::TDataType>;
+      GemmTileMetadata<MOE_PROBLEM_CONFIG::HIDDEN_SIZE,
+                       MOE_PROBLEM_CONFIG::EXPERT_INTERMEDIATE_SIZE,
+                       TILE_M_SIZE, EXPERTS_N_TILE_SIZE, TILE_K_SIZE,
+                       HW_CONFIG::THREADS,
+                       typename MOE_PROBLEM_CONFIG::TDataType>;
 };
 
 // Moe impl metadata.

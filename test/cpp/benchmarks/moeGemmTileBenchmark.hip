@@ -48,16 +48,16 @@ hipError_t batchedGemv(const float* A, const float* B, float* C) {
   // NOTE: We process gemm as many gemv, which simiulates moe case.
   constexpr int M_TILE = 1;
 
-  using TGemmTileParams =
-      GemmTileParams<N, K, M_TILE, N_TILE, K_TILE, THREADS, float>;
+  using TGemmTileMetadata =
+      GemmTileMetadata<N, K, M_TILE, N_TILE, K_TILE, THREADS, float>;
 
   constexpr int N_CHUNKS = N / N_TILE;
   constexpr int TILES_TO_PROCESS = N_CHUNKS * M;
 
   dim3 grid(TILES_TO_PROCESS);
-  dim3 block(TGemmTileParams::THREADS);
+  dim3 block(TGemmTileMetadata::THREADS);
 
-  batchedGemvKernel<TGemmTileParams><<<grid, block, 0, 0>>>(A, B, C);
+  batchedGemvKernel<TGemmTileMetadata><<<grid, block, 0, 0>>>(A, B, C);
 
   return hipSuccess;
 }
