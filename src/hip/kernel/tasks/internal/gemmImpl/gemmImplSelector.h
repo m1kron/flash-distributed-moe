@@ -1,5 +1,5 @@
 #pragma once
-#include "src/hip/kernel/tasks/internal/gemmImpl/basicGemm.h"
+#include "src/hip/kernel/tasks/internal/gemmImpl/basicGemmTileImpl.h"
 #include "src/tools/compileTimeSelector.h"
 
 namespace moe {
