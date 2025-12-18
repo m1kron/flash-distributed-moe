@@ -4,6 +4,51 @@
 #include <iostream>
 #include <rocshmem/rocshmem.hpp>
 
+const int TOKENS_PER_GPU = 4;
+const int TOKEN_SIZE = 2048;
+const int THREADS = 1024;
+const int BLOCKS = 4;
+const int ALLOC_SLOT_SIZE = 16;
+
+void PrintOutput(const std::vector<float>& output_host, int rank) {
+  std::string outputString;
+  outputString += "\nRank " + std::to_string(rank) + ":\n";
+  for (int tokenIdx = 0; tokenIdx < TOKENS_PER_GPU; tokenIdx++) {
+    outputString += "Token " + std::to_string(tokenIdx) + ":\n";
+    for (int i = 0; i < 5; i++) {
+      int globalIdx = tokenIdx * TOKEN_SIZE + i;
+      outputString += std::to_string(output_host[globalIdx]) + " ";
+    }
+    outputString += "\n";
+  }
+  outputString += "\n";
+
+  std::cout << outputString;
+}
+
+void VerifyOutput(const std::vector<float>& input,
+                  const std::vector<int>& routingTable,
+                  const std::vector<float>& output_host, int rank) {
+  bool allCorrect = true;
+  for (int tokenIdx = 0; tokenIdx < TOKENS_PER_GPU; tokenIdx++) {
+    const float routeVal = (float)routingTable[tokenIdx];
+    for (int i = 0; i < TOKEN_SIZE; i++) {
+      int globalIdx = tokenIdx * TOKEN_SIZE + i;
+      const float expectedValue = routeVal + input[globalIdx];
+      if (output_host[globalIdx] != expectedValue) {
+        allCorrect = false;
+        std::cout << "Rank " << rank << " found incorrect value at token "
+                  << tokenIdx << " index " << i << ": "
+                  << output_host[globalIdx] << " != " << expectedValue << "\n";
+        break;
+      }
+    }
+  }
+  if (allCorrect) {
+    std::cout << "Rank " << rank << " output is correct.\n";
+  }
+}
+
 #define CHECK_HIP(condition)                                        \
   {                                                                 \
     hipError_t error = condition;                                   \
@@ -15,30 +60,36 @@
 
 using namespace rocshmem;
 
-__global__ void sendMsgToPeerKernel(uint64_t* data, uint64_t* message,
-                                    size_t nelem, uint64_t* sig_addr, int my_pe,
-                                    int dst_pe) {
-  int threadId = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void moeLikeCommKernel(const float* input, float* output,
+                                  const int* routingTable,
+                                  float* remoteTokenMemPool,
+                                  int* remoteTokenMemPoolIdx, int numTokens,
+                                  int my_pe, int npes) {
+  // 1. Send input to destination PEs based on routing table.
+  for (int thisBlockTokenIdx = blockIdx.x; thisBlockTokenIdx < numTokens;
+       thisBlockTokenIdx += gridDim.x) {
+    const int dst_pe = routingTable[thisBlockTokenIdx];
 
-  if (my_pe == 0) {
-    rocshmem_ulong_put_signal_wg(data, message, nelem, sig_addr, 1,
-                                 ROCSHMEM_SIGNAL_SET, dst_pe);
-    if (threadId == 0) {
-      rocshmem_ulong_wait_until(sig_addr, ROCSHMEM_CMP_EQ, 1);
+    if (threadIdx.x == 0) {
+      const int idx =
+          rocshmem_int_atomic_fetch_inc(remoteTokenMemPoolIdx, dst_pe);
+      const float* thisBlockInput = input + thisBlockTokenIdx * TOKEN_SIZE;
+      printf("PE %d sending token %d to PE %d into slot %d\n", my_pe,
+             thisBlockTokenIdx, dst_pe, idx);
+
+      rocshmem_putmem(remoteTokenMemPool + idx * TOKEN_SIZE, thisBlockInput,
+                         TOKEN_SIZE * sizeof(float), dst_pe);
     }
-  } else {
-    if (threadId == 0) {
-      rocshmem_ulong_wait_until(sig_addr, ROCSHMEM_CMP_EQ, 1);
-    }
-    __syncthreads();
-    data[threadIdx.x] = data[threadIdx.x] + 1;
-    rocshmem_ulong_put_signal_wg(data, data, nelem, sig_addr, 1,
-                                 ROCSHMEM_SIGNAL_SET, dst_pe);
+
+    // float dstForToken = (float)routingTable[thisBlockTokenIdx];
+
+    // float* thisBlockOutput = output + thisBlockTokenIdx * TOKEN_SIZE;
+
+    // for (int i = threadIdx.x; i < TOKEN_SIZE; i += blockDim.x) {
+    //   thisBlockOutput[i] = dstForToken + thisBlockInput[i];
+    // }
   }
-  __syncthreads();
 }
-
-#define MAX_ELEM 1024
 
 int main(int argc, char** argv) {
   const int rank = rocshmem_my_pe();
@@ -48,11 +99,6 @@ int main(int argc, char** argv) {
   CHECK_HIP(hipSetDevice(my_device));
   rocshmem_init();
   const int worldSize = rocshmem_n_pes();
-
-  const int TOKENS_PER_GPU = 16;
-  const int TOKEN_SIZE = 2048;
-  const int THREADS = 1024;
-  const int BLOCKS = 4;
 
   const int INPUT_SIZE = TOKENS_PER_GPU * TOKEN_SIZE;
 
@@ -65,71 +111,46 @@ int main(int argc, char** argv) {
     routingTable[i] = proposition;
   }
 
+  std::vector<float> input_host(INPUT_SIZE, (float)rank);
+
   int* routingTable_device;
   CHECK_HIP(hipMalloc(&routingTable_device, TOKENS_PER_GPU * sizeof(int)));
   CHECK_HIP(hipMemcpy(routingTable_device, routingTable.data(),
                       TOKENS_PER_GPU * sizeof(int), hipMemcpyHostToDevice));
 
-  int* input_device;
-  CHECK_HIP(hipMalloc(&input_device, INPUT_SIZE * sizeof(int)));
+  float* input_device;
+  CHECK_HIP(hipMalloc(&input_device, INPUT_SIZE * sizeof(float)));
+  CHECK_HIP(hipMemcpy(input_device, input_host.data(),
+                      INPUT_SIZE * sizeof(float), hipMemcpyHostToDevice));
 
-  int* output_device;
-  CHECK_HIP(hipMalloc(&output_device, INPUT_SIZE * sizeof(int)));
+  float* remoteTokenMemPool =
+      (float*)rocshmem_malloc(ALLOC_SLOT_SIZE * TOKEN_SIZE * sizeof(float));
 
-  int nelem = MAX_ELEM;
+  int* remoteTokenMemPoolIdx = (int*)rocshmem_malloc(sizeof(int));
+  CHECK_HIP(hipMemset(remoteTokenMemPoolIdx, 0, sizeof(int)));
 
-  if (argc > 1) {
-    nelem = atoi(argv[1]);
-  }
+  float* output_device;
+  CHECK_HIP(hipMalloc(&output_device, INPUT_SIZE * sizeof(float)));
 
-  const int dst_pe = (rank + 1) % npes;
-  const int prev_pe = (rank - 1 + npes) % npes;
-  uint64_t* message_host = (uint64_t*)malloc(nelem * sizeof(uint64_t));
-  constexpr int msgVal = 12345;
+  moeLikeCommKernel<<<BLOCKS, THREADS>>>(
+      input_device, output_device, routingTable_device, remoteTokenMemPool,
+      remoteTokenMemPoolIdx, TOKENS_PER_GPU, rank, worldSize);
 
-  for (int i = 0; i < nelem; i++) {
-    message_host[i] = msgVal;
-  }
-
-  uint64_t* message_device;
-  CHECK_HIP(hipMalloc(&message_device, nelem * sizeof(uint64_t)));
-  CHECK_HIP(hipMemcpy(message_device, message_host, nelem * sizeof(uint64_t),
-                      hipMemcpyHostToDevice));
-
-  uint64_t* data = (uint64_t*)rocshmem_malloc(nelem * sizeof(uint64_t));
-  uint64_t* sig_addr = (uint64_t*)rocshmem_malloc(sizeof(uint64_t));
-  if (NULL == data || NULL == message_device || NULL == sig_addr) {
-    std::cout << "Error allocating memory from symmetric heap" << std::endl;
-    std::cout << "data: " << data << ", message: " << message_device
-              << ", size: " << sizeof(uint64_t) * nelem
-              << ", sig_addr: " << sig_addr << std::endl;
-    rocshmem_global_exit(1);
-  }
-
-  CHECK_HIP(hipMemset(data, 0, (nelem * sizeof(uint64_t))));
-  CHECK_HIP(hipMemset(sig_addr, 0, (sizeof(uint64_t))));
-  CHECK_HIP(hipDeviceSynchronize());
-
-  int threadsPerBlock = MAX_ELEM;
-  sendMsgToPeerKernel<<<dim3(1), dim3(threadsPerBlock), 0, 0>>>(
-      data, message_device, nelem, sig_addr, rank, dst_pe);
   rocshmem_barrier_all();
   CHECK_HIP(hipDeviceSynchronize());
 
-  bool pass = true;
-  const int expected = rank == 0 ? msgVal + npes - 1 : msgVal + rank;
-  for (int i = 0; i < nelem; i++) {
-    if (data[i] != expected) {
-      pass = false;
-      printf("[%d] Error in element %d expected %d got %lu\n", rank, i,
-             expected, data[i]);
-    }
-  }
-  printf("[%d] Test %s \t %s\n", rank, argv[0], pass ? "[PASS]" : "[FAIL]");
+  std::vector<float> output_host(INPUT_SIZE, 0);
+  CHECK_HIP(hipMemcpy(output_host.data(), remoteTokenMemPool,
+                      INPUT_SIZE * sizeof(float), hipMemcpyDeviceToHost));
 
-  free(message_host);
-  CHECK_HIP(hipFree(message_device));
-  rocshmem_free(data);
+  CHECK_HIP(hipFree(output_device));
+  rocshmem_free(remoteTokenMemPool);
+  CHECK_HIP(hipFree(input_device));
+  CHECK_HIP(hipFree(routingTable_device));
+
   rocshmem_finalize();
+
+  PrintOutput(output_host, rank);
+  // VerifyOutput(input_host, routingTable, output_host, rank);
   return 0;
 }
