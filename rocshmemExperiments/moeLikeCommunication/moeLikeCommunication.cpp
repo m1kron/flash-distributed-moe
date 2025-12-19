@@ -7,7 +7,7 @@
 const int TOKENS_PER_GPU = 4;
 const int TOKEN_SIZE = 2048;
 const int THREADS = 1024;
-const int BLOCKS = 8;
+const int BLOCKS = 5;
 const int ALLOC_SLOT_SIZE = 16;
 
 void PrintOutput(const std::vector<float>& output_host, int rank) {
@@ -60,11 +60,14 @@ void VerifyOutput(const std::vector<float>& input,
 
 using namespace rocshmem;
 
-__global__ void moeLikeCommKernel(
-    const float* input, float* output, const int* routingTable,
-    float* remoteTokenMemPool_sym, int* remoteTokenMemPoolFirstFreeIdx_sym,
-    uint64_t* remoteTokenMemPoolSlotStatus_sym, int* doneSendingFlag_sym,
-    int* sendTokens_global, int numTokens, int my_pe, int npes) {
+__global__ void moeLikeCommKernel(const float* input, float* output,
+                                  const int* routingTable,
+                                  float* remoteTokenMemPool_sym,
+                                  int* remoteTokenMemPoolFirstFreeIdx_sym,
+                                  uint64_t* remoteTokenMemPoolSlotStatus_sym,
+                                  int* doneSendingFlag_sym,
+                                  int* sendTokens_global, int* tokenIdx_global,
+                                  int numTokens, int my_pe, int npes) {
   // 1. Send input to destination PEs based on routing table.
   for (int thisBlockTokenIdx = blockIdx.x; thisBlockTokenIdx < numTokens;
        thisBlockTokenIdx += gridDim.x) {
@@ -98,6 +101,32 @@ __global__ void moeLikeCommKernel(
     }
     __syncthreads();
   }
+
+  // 2. Each block processes received tokens.
+  if (threadIdx.x == 0) {
+    bool shouldStop = false;
+    while (!shouldStop) {
+      printf("PE %d block %d starting to receive tokens.\n", my_pe, blockIdx.x);
+      const int slot = atomicAdd(tokenIdx_global, 1);
+
+      int slotStatus = rocshmem_uint64_atomic_fetch(
+          remoteTokenMemPoolSlotStatus_sym + slot, my_pe);
+      while (slotStatus == 0 && !shouldStop) {
+        slotStatus = rocshmem_uint64_atomic_fetch(
+            remoteTokenMemPoolSlotStatus_sym + slot, my_pe);
+
+        shouldStop = rocshmem_int_test(doneSendingFlag_sym, ROCSHMEM_CMP_EQ,
+                                       npes - 1) == 1;
+      }
+
+      if (shouldStop) break;
+
+      printf("PE %d block %d received token in slot %d.\n", my_pe, blockIdx.x,
+             slot);
+    }
+  }
+
+  __syncthreads();
 
   // 2. Wait until all PEs are done sending.
   if (threadIdx.x == 0) {
@@ -158,6 +187,10 @@ int main(int argc, char** argv) {
   CHECK_HIP(hipMemset(remoteTokenMemPoolSlotStatus_sym, 0,
                       ALLOC_SLOT_SIZE * sizeof(uint64_t)));
 
+  int* tokenIdx_global;
+  CHECK_HIP(hipMalloc(&tokenIdx_global, sizeof(int)));
+  CHECK_HIP(hipMemset(tokenIdx_global, 0, sizeof(int)));
+
   int* doneSendingFlag_sym = (int*)rocshmem_malloc(sizeof(int));
   CHECK_HIP(hipMemset(doneSendingFlag_sym, 0, sizeof(int)));
 
@@ -173,7 +206,8 @@ int main(int argc, char** argv) {
   moeLikeCommKernel<<<BLOCKS, THREADS>>>(
       input_device, output_device, routingTable_device, remoteTokenMemPool_sym,
       remoteTokenMemPoolFirstFreeIdx_sym, remoteTokenMemPoolSlotStatus_sym,
-      doneSendingFlag_sym, sendTokens_global, TOKENS_PER_GPU, rank, worldSize);
+      doneSendingFlag_sym, sendTokens_global, tokenIdx_global, TOKENS_PER_GPU,
+      rank, worldSize);
 
   rocshmem_barrier_all();
   CHECK_HIP(hipDeviceSynchronize());
