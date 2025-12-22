@@ -9,14 +9,16 @@ const int TOKEN_SIZE = 2048;
 const int THREADS = 1024;
 const int BLOCKS = 5;
 const int ALLOC_SLOT_SIZE = 16;
+const int TOKEN_HEADER_SIZE = 2;  // -> pe | pe's token index.
 
-void PrintOutput(const std::vector<float>& output_host, int rank) {
+void PrintOutput(const std::vector<float>& output_host, int rank,
+                 int stride = TOKEN_SIZE) {
   std::string outputString;
   outputString += "\nRank " + std::to_string(rank) + ":\n";
   for (int tokenIdx = 0; tokenIdx < TOKENS_PER_GPU; tokenIdx++) {
     outputString += "Token " + std::to_string(tokenIdx) + ":\n";
     for (int i = 0; i < 5; i++) {
-      int globalIdx = tokenIdx * TOKEN_SIZE + i;
+      int globalIdx = tokenIdx * stride + i;
       outputString += std::to_string(output_host[globalIdx]) + " ";
     }
     outputString += "\n";
@@ -81,13 +83,22 @@ __global__ void moeLikeCommKernel(const float* input, float* output,
       printf("PE %d sending token %d to PE %d into slot %d\n", my_pe,
              thisBlockTokenIdx, dst_pe, idx);
 
-      rocshmem_float_put_signal(remoteTokenMemPool_sym + idx * TOKEN_SIZE,
+      float* remotePoolPtr =
+          remoteTokenMemPool_sym + idx * (TOKEN_SIZE + TOKEN_HEADER_SIZE);
+      const float my_pe_f = (float)my_pe;
+      const float tokenIdx_f = (float)(thisBlockTokenIdx);
+      rocshmem_float_put(remotePoolPtr, &my_pe_f, 1, dst_pe);
+      rocshmem_float_put(remotePoolPtr + 1, &tokenIdx_f, 1, dst_pe);
+      rocshmem_float_put_signal(remotePoolPtr + TOKEN_HEADER_SIZE,
                                 thisBlockInput, TOKEN_SIZE,
                                 remoteTokenMemPoolSlotStatus_sym + idx, 1,
                                 ROCSHMEM_SIGNAL_SET, dst_pe);
 
       rocshmem_fence();
-      const int prev = atomicAdd(sendTokens_global, 1);
+      // const int prev = atomicAdd(sendTokens_global, 1);
+
+      const int prev = __hip_atomic_fetch_add(
+          sendTokens_global, 1, __ATOMIC_SEQ_CST, __HIP_MEMORY_SCOPE_AGENT);
 
       // Last block informs all PEs that sending is done.
       if (prev == (numTokens - 1)) {
@@ -107,6 +118,7 @@ __global__ void moeLikeCommKernel(const float* input, float* output,
     bool shouldStop = false;
     while (!shouldStop) {
       printf("PE %d block %d starting to receive tokens.\n", my_pe, blockIdx.x);
+
       const int slot = atomicAdd(tokenIdx_global, 1);
 
       int slotStatus = rocshmem_uint64_atomic_fetch(
@@ -176,8 +188,8 @@ int main(int argc, char** argv) {
   CHECK_HIP(hipMalloc(&sendTokens_global, sizeof(int)));
   CHECK_HIP(hipMemset(sendTokens_global, 0, sizeof(int)));
 
-  float* remoteTokenMemPool_sym =
-      (float*)rocshmem_malloc(ALLOC_SLOT_SIZE * TOKEN_SIZE * sizeof(float));
+  float* remoteTokenMemPool_sym = (float*)rocshmem_malloc(
+      ALLOC_SLOT_SIZE * (TOKEN_SIZE + TOKEN_HEADER_SIZE) * sizeof(float));
 
   int* remoteTokenMemPoolFirstFreeIdx_sym = (int*)rocshmem_malloc(sizeof(int));
   CHECK_HIP(hipMemset(remoteTokenMemPoolFirstFreeIdx_sym, 0, sizeof(int)));
@@ -212,9 +224,15 @@ int main(int argc, char** argv) {
   rocshmem_barrier_all();
   CHECK_HIP(hipDeviceSynchronize());
 
-  std::vector<float> output_host(INPUT_SIZE, 0);
-  CHECK_HIP(hipMemcpy(output_host.data(), remoteTokenMemPool_sym,
-                      INPUT_SIZE * sizeof(float), hipMemcpyDeviceToHost));
+  //  std::vector<float> output_host(INPUT_SIZE, 0);
+  // CHECK_HIP(hipMemcpy(output_host.data(), output_device,
+  //                    INPUT_SIZE * sizeof(float), hipMemcpyDeviceToHost));
+  std::vector<float> output_host(
+      TOKENS_PER_GPU * (TOKEN_SIZE + TOKEN_HEADER_SIZE), 0);
+  CHECK_HIP(hipMemcpy(
+      output_host.data(), remoteTokenMemPool_sym,
+      TOKENS_PER_GPU * (TOKEN_SIZE + TOKEN_HEADER_SIZE) * sizeof(float),
+      hipMemcpyDeviceToHost));
 
   CHECK_HIP(hipFree(output_device));
   rocshmem_free(remoteTokenMemPool_sym);
@@ -223,7 +241,7 @@ int main(int argc, char** argv) {
 
   rocshmem_finalize();
 
-  PrintOutput(output_host, rank);
+  PrintOutput(output_host, rank, TOKEN_SIZE + TOKEN_HEADER_SIZE);
   // VerifyOutput(input_host, routingTable, output_host, rank);
   return 0;
 }
