@@ -60,6 +60,14 @@ void VerifyOutput(const std::vector<float>& input,
     }                                                               \
   }
 
+#define NDEBUG
+#ifdef NDEBUG
+#define HIP_DEVICE_LOG(text, ...) (void)0
+#else
+#define HIP_DEVICE_LOG(STR, ARGS...) \
+  printf("[BIdx:%d TIdX:%d]: " STR, blockIdx.x, threadIdx.x, ##ARGS);
+#endif
+
 using namespace rocshmem;
 
 __device__ void sendMsg_block(int dst_pe, int msg_pe, int tokenIdx,
@@ -73,8 +81,8 @@ __device__ void sendMsg_block(int dst_pe, int msg_pe, int tokenIdx,
     const int idx = rocshmem_int_atomic_fetch_inc(
         remoteTokenMemPoolFirstFreeIdx_sym, dst_pe);
 
-    printf("PE %d sending token %d to PE %d into slot %d\n", rocshmem_my_pe(),
-           tokenIdx, dst_pe, idx);
+    HIP_DEVICE_LOG("PE %d sending token %d to PE %d into slot %d\n",
+                   rocshmem_my_pe(), tokenIdx, dst_pe, idx);
 
     idx_shared = idx;
   }
@@ -104,8 +112,8 @@ __device__ void processMsg_block(int src_pe, int tokenIdx, float* token,
                                  int* numOutputTokens_global) {
   if (src_pe == -1) {
     if (threadIdx.x == 0) {
-      printf("PE %d: Received processed token, %d, saving to output.\n",
-             rocshmem_my_pe(), tokenIdx);
+      HIP_DEVICE_LOG("PE %d: Received processed token, %d, saving to output.\n",
+                     rocshmem_my_pe(), tokenIdx);
     }
     float* thisBlockOutput = output + tokenIdx * TOKEN_SIZE;
 
@@ -118,17 +126,17 @@ __device__ void processMsg_block(int src_pe, int tokenIdx, float* token,
     }
   } else {
     if (threadIdx.x == 0) {
-      printf("PE %d: Received token to process form %d.\n", rocshmem_my_pe(),
-             src_pe);
+      HIP_DEVICE_LOG("PE %d: Received token to process form %d.\n",
+                     rocshmem_my_pe(), src_pe);
     }
 
     for (int i = threadIdx.x; i < TOKEN_SIZE; i += blockDim.x) {
       token[i] += (float)rocshmem_my_pe();
     }
-
     if (threadIdx.x == 0) {
-      printf("PE %d: DONE processing token, %d, sending back to PE %d.\n",
-             rocshmem_my_pe(), tokenIdx, src_pe);
+      HIP_DEVICE_LOG(
+          "PE %d: DONE processing token, %d, sending back to PE %d.\n",
+          rocshmem_my_pe(), tokenIdx, src_pe);
     }
     sendMsg_block(src_pe, -1, tokenIdx, token, remoteTokenMemPool_sym,
                   remoteTokenMemPoolFirstFreeIdx_sym,
@@ -166,7 +174,7 @@ __global__ void moeLikeCommKernel(
           dst = (dst + 1) % npes;
           rocshmem_int_atomic_inc(doneSendingFlag_sym, dst);
         }
-        printf("PE %d done sending all tokens. \n", my_pe);
+        HIP_DEVICE_LOG("PE %d done sending all tokens. \n", my_pe);
       }
     }
     __syncthreads();
@@ -180,7 +188,8 @@ __global__ void moeLikeCommKernel(
   // 2. Each block processes received msgs.
   while (true) {
     if (threadIdx.x == 0) {
-      printf("PE %d block %d started to receive msgs.\n", my_pe, blockIdx.x);
+      HIP_DEVICE_LOG("PE %d block %d started to receive msgs.\n", my_pe,
+                     blockIdx.x);
 
       const int slot =
           __hip_atomic_fetch_add(reserverdSlotIdx_global, 1, __ATOMIC_SEQ_CST,
@@ -189,8 +198,8 @@ __global__ void moeLikeCommKernel(
       int slotStatus = rocshmem_uint64_atomic_fetch(
           remoteTokenMemPoolSlotStatus_sym + slot, my_pe);
 
-      printf("PE %d block %d waiting for slot %d to be filled.\n", my_pe,
-             blockIdx.x, slot);
+      HIP_DEVICE_LOG("PE %d block %d waiting for slot %d to be filled.\n",
+                     my_pe, blockIdx.x, slot);
 
       bool shouldStop = false;
 
@@ -224,7 +233,7 @@ __global__ void moeLikeCommKernel(
         receivedPE_shared = peInt;
         receivedTokenIdx_shared = tokenIdxInt;
 
-        printf(
+        HIP_DEVICE_LOG(
             "PE %d block %d received msg in slot %d: from PE %d, tokenIdx %d\n",
             my_pe, blockIdx.x, slot, peInt, tokenIdxInt);
       }
@@ -236,7 +245,8 @@ __global__ void moeLikeCommKernel(
 
     if (stopSignal_shared) {
       if (threadIdx.x == 0) {
-        printf("PE %d block %d received stop signal.\n", my_pe, blockIdx.x);
+        HIP_DEVICE_LOG("PE %d block %d received stop signal.\n", my_pe,
+                       blockIdx.x);
       }
       break;
     }
