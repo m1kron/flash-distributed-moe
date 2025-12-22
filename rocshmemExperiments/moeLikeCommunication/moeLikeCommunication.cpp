@@ -7,8 +7,8 @@
 const int TOKENS_PER_GPU = 4;
 const int TOKEN_SIZE = 2048;
 const int THREADS = 1024;
-const int BLOCKS = 5;
-const int ALLOC_SLOT_SIZE = 16;
+const int BLOCKS = 8;
+const int ALLOC_SLOT_SIZE = 64;
 const int TOKEN_HEADER_SIZE = 2;  // -> pe | pe's token index.
 
 void PrintOutput(const std::vector<float>& output_host, int rank,
@@ -62,39 +62,87 @@ void VerifyOutput(const std::vector<float>& input,
 
 using namespace rocshmem;
 
-__global__ void moeLikeCommKernel(const float* input, float* output,
-                                  const int* routingTable,
-                                  float* remoteTokenMemPool_sym,
-                                  int* remoteTokenMemPoolFirstFreeIdx_sym,
-                                  uint64_t* remoteTokenMemPoolSlotStatus_sym,
-                                  int* doneSendingFlag_sym,
-                                  int* sendTokens_global, int* tokenIdx_global,
-                                  int numTokens, int my_pe, int npes) {
+__device__ void sendMsg(int dst_pe, int msg_pe, int tokenIdx,
+                        const float* tokenData, float* remoteTokenMemPool_sym,
+                        int* remoteTokenMemPoolFirstFreeIdx_sym,
+                        uint64_t* remoteTokenMemPoolSlotStatus_sym) {
+  if (threadIdx.x == 0) {
+    // "Allocate" a slot in the remote PE's token memory pool.
+    const int idx = rocshmem_int_atomic_fetch_inc(
+        remoteTokenMemPoolFirstFreeIdx_sym, dst_pe);
+
+    printf("PE %d sending token %d to PE %d into slot %d\n", rocshmem_my_pe(),
+           tokenIdx, dst_pe, idx);
+
+    float* remotePoolPtr =
+        remoteTokenMemPool_sym + idx * (TOKEN_SIZE + TOKEN_HEADER_SIZE);
+    const float my_pe_f = (float)msg_pe;
+    const float tokenIdx_f = (float)(tokenIdx);
+    rocshmem_float_put(remotePoolPtr, &my_pe_f, 1, dst_pe);
+    rocshmem_float_put(remotePoolPtr + 1, &tokenIdx_f, 1, dst_pe);
+    rocshmem_float_put_signal(
+        remotePoolPtr + TOKEN_HEADER_SIZE, tokenData, TOKEN_SIZE,
+        remoteTokenMemPoolSlotStatus_sym + idx, 1, ROCSHMEM_SIGNAL_SET, dst_pe);
+
+    rocshmem_fence();
+  }
+}
+
+__device__ void processMsg(int src_pe, int tokenIdx, float* token,
+                           float* output, float* remoteTokenMemPool_sym,
+                           int* remoteTokenMemPoolFirstFreeIdx_sym,
+                           uint64_t* remoteTokenMemPoolSlotStatus_sym,
+                           int* numOutputTokens_global) {
+  if (threadIdx.x == 0) {
+    if (src_pe == -1) {
+      printf("PE %d: Received processed token, %d, saving to output.\n",
+             rocshmem_my_pe(), tokenIdx);
+
+      // Save the processed token to the output buffer.
+      rocshmem_float_put(output + tokenIdx * TOKEN_SIZE, token, TOKEN_SIZE,
+                         rocshmem_my_pe());
+
+      __hip_atomic_fetch_add(numOutputTokens_global, 1, __ATOMIC_SEQ_CST,
+                             __HIP_MEMORY_SCOPE_AGENT);
+
+      return;
+    } else {
+      printf("PE %d: Received token to process form %d.\n", rocshmem_my_pe(),
+             src_pe);
+
+      for (int i = 0; i < TOKEN_SIZE; i++) {
+        token[i] += (float)rocshmem_my_pe();
+      }
+
+      printf("PE %d: DONE processing token, %d, sending back to PE %d.\n",
+             rocshmem_my_pe(), tokenIdx, src_pe);
+
+      sendMsg(src_pe, -1, tokenIdx, token, remoteTokenMemPool_sym,
+              remoteTokenMemPoolFirstFreeIdx_sym,
+              remoteTokenMemPoolSlotStatus_sym);
+      return;
+    }
+  }
+}
+
+__global__ void moeLikeCommKernel(
+    const float* input, float* output, const int* routingTable,
+    float* remoteTokenMemPool_sym, int* remoteTokenMemPoolFirstFreeIdx_sym,
+    uint64_t* remoteTokenMemPoolSlotStatus_sym, int* doneSendingFlag_sym,
+    int* sendTokens_global, int* numOutputTokens_global,
+    int* reserverdSlotIdx_global, int numTokens, int my_pe, int npes) {
   // 1. Send input to destination PEs based on routing table.
   for (int thisBlockTokenIdx = blockIdx.x; thisBlockTokenIdx < numTokens;
        thisBlockTokenIdx += gridDim.x) {
     const int dst_pe = routingTable[thisBlockTokenIdx];
 
+    const float* thisBlockInput = input + thisBlockTokenIdx * TOKEN_SIZE;
+
+    sendMsg(dst_pe, my_pe, thisBlockTokenIdx, thisBlockInput,
+            remoteTokenMemPool_sym, remoteTokenMemPoolFirstFreeIdx_sym,
+            remoteTokenMemPoolSlotStatus_sym);
+
     if (threadIdx.x == 0) {
-      // "Allocate" a slot in the remote PE's token memory pool.
-      const int idx = rocshmem_int_atomic_fetch_inc(
-          remoteTokenMemPoolFirstFreeIdx_sym, dst_pe);
-      const float* thisBlockInput = input + thisBlockTokenIdx * TOKEN_SIZE;
-      printf("PE %d sending token %d to PE %d into slot %d\n", my_pe,
-             thisBlockTokenIdx, dst_pe, idx);
-
-      float* remotePoolPtr =
-          remoteTokenMemPool_sym + idx * (TOKEN_SIZE + TOKEN_HEADER_SIZE);
-      const float my_pe_f = (float)my_pe;
-      const float tokenIdx_f = (float)(thisBlockTokenIdx);
-      rocshmem_float_put(remotePoolPtr, &my_pe_f, 1, dst_pe);
-      rocshmem_float_put(remotePoolPtr + 1, &tokenIdx_f, 1, dst_pe);
-      rocshmem_float_put_signal(remotePoolPtr + TOKEN_HEADER_SIZE,
-                                thisBlockInput, TOKEN_SIZE,
-                                remoteTokenMemPoolSlotStatus_sym + idx, 1,
-                                ROCSHMEM_SIGNAL_SET, dst_pe);
-
-      rocshmem_fence();
       // const int prev = atomicAdd(sendTokens_global, 1);
 
       const int prev = __hip_atomic_fetch_add(
@@ -113,40 +161,60 @@ __global__ void moeLikeCommKernel(const float* input, float* output,
     __syncthreads();
   }
 
-  // 2. Each block processes received tokens.
+  // 2. Each block processes received msgs.
   if (threadIdx.x == 0) {
-    bool shouldStop = false;
-    while (!shouldStop) {
-      printf("PE %d block %d starting to receive tokens.\n", my_pe, blockIdx.x);
+    printf("PE %d block %d started to receive msgs.\n", my_pe, blockIdx.x);
 
-      const int slot = atomicAdd(tokenIdx_global, 1);
+    while (true) {
+      const int slot =
+          __hip_atomic_fetch_add(reserverdSlotIdx_global, 1, __ATOMIC_SEQ_CST,
+                                 __HIP_MEMORY_SCOPE_AGENT);
 
       int slotStatus = rocshmem_uint64_atomic_fetch(
           remoteTokenMemPoolSlotStatus_sym + slot, my_pe);
+
+      printf("PE %d block %d waiting for slot %d to be filled.\n", my_pe,
+             blockIdx.x, slot);
+
+      bool shouldStop = false;
+
       while (slotStatus == 0 && !shouldStop) {
         slotStatus = rocshmem_uint64_atomic_fetch(
             remoteTokenMemPoolSlotStatus_sym + slot, my_pe);
 
-        shouldStop = rocshmem_int_test(doneSendingFlag_sym, ROCSHMEM_CMP_EQ,
-                                       npes - 1) == 1;
+        const bool allDoneSending =
+            rocshmem_int_test(doneSendingFlag_sym, ROCSHMEM_CMP_EQ, npes - 1) ==
+            1;
+
+        const bool allTokensSaved =
+            __hip_atomic_load(numOutputTokens_global, __ATOMIC_RELAXED,
+                              __HIP_MEMORY_SCOPE_AGENT) == TOKENS_PER_GPU;
+
+        shouldStop = allDoneSending && allTokensSaved;
       }
 
-      if (shouldStop) break;
+      if (shouldStop) {
+        printf("PE %d block %d received stop signal.\n", my_pe, blockIdx.x);
+        break;
+      }
 
-      printf("PE %d block %d received token in slot %d.\n", my_pe, blockIdx.x,
-             slot);
+      float* remotePoolPtr =
+          remoteTokenMemPool_sym + slot * (TOKEN_SIZE + TOKEN_HEADER_SIZE);
+      float pe;
+      float tokenIdx;
+      rocshmem_float_get(&pe, remotePoolPtr, 1, my_pe);
+      rocshmem_float_get(&tokenIdx, remotePoolPtr + 1, 1, my_pe);
+      int peInt = (int)pe;
+      int tokenIdxInt = (int)tokenIdx;
+
+      printf(
+          "PE %d block %d received msg in slot %d: from PE %d, tokenIdx %d\n",
+          my_pe, blockIdx.x, slot, peInt, tokenIdxInt);
+
+      processMsg(peInt, tokenIdxInt, remotePoolPtr + TOKEN_HEADER_SIZE, output,
+                 remoteTokenMemPool_sym, remoteTokenMemPoolFirstFreeIdx_sym,
+                 remoteTokenMemPoolSlotStatus_sym, numOutputTokens_global);
     }
-  }
-
-  __syncthreads();
-
-  // 2. Wait until all PEs are done sending.
-  if (threadIdx.x == 0) {
-    rocshmem_int_wait_until(doneSendingFlag_sym, ROCSHMEM_CMP_EQ, npes - 1);
-    const int receivedTokens =
-        rocshmem_int_atomic_fetch(remoteTokenMemPoolFirstFreeIdx_sym, my_pe);
-    printf("PE %d detected all PEs done sending. Received %d tokens.\n", my_pe,
-           receivedTokens);
   }
 
   __syncthreads();
@@ -188,6 +256,10 @@ int main(int argc, char** argv) {
   CHECK_HIP(hipMalloc(&sendTokens_global, sizeof(int)));
   CHECK_HIP(hipMemset(sendTokens_global, 0, sizeof(int)));
 
+  int* numOutputTokens_global;
+  CHECK_HIP(hipMalloc(&numOutputTokens_global, sizeof(int)));
+  CHECK_HIP(hipMemset(numOutputTokens_global, 0, sizeof(int)));
+
   float* remoteTokenMemPool_sym = (float*)rocshmem_malloc(
       ALLOC_SLOT_SIZE * (TOKEN_SIZE + TOKEN_HEADER_SIZE) * sizeof(float));
 
@@ -199,9 +271,9 @@ int main(int argc, char** argv) {
   CHECK_HIP(hipMemset(remoteTokenMemPoolSlotStatus_sym, 0,
                       ALLOC_SLOT_SIZE * sizeof(uint64_t)));
 
-  int* tokenIdx_global;
-  CHECK_HIP(hipMalloc(&tokenIdx_global, sizeof(int)));
-  CHECK_HIP(hipMemset(tokenIdx_global, 0, sizeof(int)));
+  int* reserverdSlotIdx_global;
+  CHECK_HIP(hipMalloc(&reserverdSlotIdx_global, sizeof(int)));
+  CHECK_HIP(hipMemset(reserverdSlotIdx_global, 0, sizeof(int)));
 
   int* doneSendingFlag_sym = (int*)rocshmem_malloc(sizeof(int));
   CHECK_HIP(hipMemset(doneSendingFlag_sym, 0, sizeof(int)));
@@ -218,21 +290,15 @@ int main(int argc, char** argv) {
   moeLikeCommKernel<<<BLOCKS, THREADS>>>(
       input_device, output_device, routingTable_device, remoteTokenMemPool_sym,
       remoteTokenMemPoolFirstFreeIdx_sym, remoteTokenMemPoolSlotStatus_sym,
-      doneSendingFlag_sym, sendTokens_global, tokenIdx_global, TOKENS_PER_GPU,
-      rank, worldSize);
+      doneSendingFlag_sym, sendTokens_global, numOutputTokens_global,
+      reserverdSlotIdx_global, TOKENS_PER_GPU, rank, worldSize);
 
   rocshmem_barrier_all();
   CHECK_HIP(hipDeviceSynchronize());
 
-  //  std::vector<float> output_host(INPUT_SIZE, 0);
-  // CHECK_HIP(hipMemcpy(output_host.data(), output_device,
-  //                    INPUT_SIZE * sizeof(float), hipMemcpyDeviceToHost));
-  std::vector<float> output_host(
-      TOKENS_PER_GPU * (TOKEN_SIZE + TOKEN_HEADER_SIZE), 0);
-  CHECK_HIP(hipMemcpy(
-      output_host.data(), remoteTokenMemPool_sym,
-      TOKENS_PER_GPU * (TOKEN_SIZE + TOKEN_HEADER_SIZE) * sizeof(float),
-      hipMemcpyDeviceToHost));
+  std::vector<float> output_host(INPUT_SIZE, 0);
+  CHECK_HIP(hipMemcpy(output_host.data(), output_device,
+                      INPUT_SIZE * sizeof(float), hipMemcpyDeviceToHost));
 
   CHECK_HIP(hipFree(output_device));
   rocshmem_free(remoteTokenMemPool_sym);
@@ -241,7 +307,7 @@ int main(int argc, char** argv) {
 
   rocshmem_finalize();
 
-  PrintOutput(output_host, rank, TOKEN_SIZE + TOKEN_HEADER_SIZE);
-  // VerifyOutput(input_host, routingTable, output_host, rank);
+  // PrintOutput(output_host, rank, TOKEN_SIZE);
+  VerifyOutput(input_host, routingTable, output_host, rank);
   return 0;
 }
