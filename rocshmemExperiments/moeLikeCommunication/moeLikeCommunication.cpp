@@ -62,10 +62,11 @@ void VerifyOutput(const std::vector<float>& input,
 
 using namespace rocshmem;
 
-__device__ void sendMsg(int dst_pe, int msg_pe, int tokenIdx,
-                        const float* tokenData, float* remoteTokenMemPool_sym,
-                        int* remoteTokenMemPoolFirstFreeIdx_sym,
-                        uint64_t* remoteTokenMemPoolSlotStatus_sym) {
+__device__ void sendMsg_block(int dst_pe, int msg_pe, int tokenIdx,
+                              const float* tokenData,
+                              float* remoteTokenMemPool_sym,
+                              int* remoteTokenMemPoolFirstFreeIdx_sym,
+                              uint64_t* remoteTokenMemPoolSlotStatus_sym) {
   if (threadIdx.x == 0) {
     // "Allocate" a slot in the remote PE's token memory pool.
     const int idx = rocshmem_int_atomic_fetch_inc(
@@ -88,11 +89,11 @@ __device__ void sendMsg(int dst_pe, int msg_pe, int tokenIdx,
   }
 }
 
-__device__ void processMsg(int src_pe, int tokenIdx, float* token,
-                           float* output, float* remoteTokenMemPool_sym,
-                           int* remoteTokenMemPoolFirstFreeIdx_sym,
-                           uint64_t* remoteTokenMemPoolSlotStatus_sym,
-                           int* numOutputTokens_global) {
+__device__ void processMsg_block(int src_pe, int tokenIdx, float* token,
+                                 float* output, float* remoteTokenMemPool_sym,
+                                 int* remoteTokenMemPoolFirstFreeIdx_sym,
+                                 uint64_t* remoteTokenMemPoolSlotStatus_sym,
+                                 int* numOutputTokens_global) {
   if (threadIdx.x == 0) {
     if (src_pe == -1) {
       printf("PE %d: Received processed token, %d, saving to output.\n",
@@ -117,9 +118,9 @@ __device__ void processMsg(int src_pe, int tokenIdx, float* token,
       printf("PE %d: DONE processing token, %d, sending back to PE %d.\n",
              rocshmem_my_pe(), tokenIdx, src_pe);
 
-      sendMsg(src_pe, -1, tokenIdx, token, remoteTokenMemPool_sym,
-              remoteTokenMemPoolFirstFreeIdx_sym,
-              remoteTokenMemPoolSlotStatus_sym);
+      sendMsg_block(src_pe, -1, tokenIdx, token, remoteTokenMemPool_sym,
+                    remoteTokenMemPoolFirstFreeIdx_sym,
+                    remoteTokenMemPoolSlotStatus_sym);
       return;
     }
   }
@@ -138,9 +139,9 @@ __global__ void moeLikeCommKernel(
 
     const float* thisBlockInput = input + thisBlockTokenIdx * TOKEN_SIZE;
 
-    sendMsg(dst_pe, my_pe, thisBlockTokenIdx, thisBlockInput,
-            remoteTokenMemPool_sym, remoteTokenMemPoolFirstFreeIdx_sym,
-            remoteTokenMemPoolSlotStatus_sym);
+    sendMsg_block(dst_pe, my_pe, thisBlockTokenIdx, thisBlockInput,
+                  remoteTokenMemPool_sym, remoteTokenMemPoolFirstFreeIdx_sym,
+                  remoteTokenMemPoolSlotStatus_sym);
 
     if (threadIdx.x == 0) {
       // const int prev = atomicAdd(sendTokens_global, 1);
@@ -161,11 +162,16 @@ __global__ void moeLikeCommKernel(
     __syncthreads();
   }
 
-  // 2. Each block processes received msgs.
-  if (threadIdx.x == 0) {
-    printf("PE %d block %d started to receive msgs.\n", my_pe, blockIdx.x);
+  __shared__ bool stopSignal_shared;
+  __shared__ float* remoteSlotPtr_shared;
+  __shared__ int receivedTokenIdx_shared;
+  __shared__ int receivedPE_shared;
 
-    while (true) {
+  // 2. Each block processes received msgs.
+  while (true) {
+    if (threadIdx.x == 0) {
+      printf("PE %d block %d started to receive msgs.\n", my_pe, blockIdx.x);
+
       const int slot =
           __hip_atomic_fetch_add(reserverdSlotIdx_global, 1, __ATOMIC_SEQ_CST,
                                  __HIP_MEMORY_SCOPE_AGENT);
@@ -193,28 +199,48 @@ __global__ void moeLikeCommKernel(
         shouldStop = allDoneSending && allTokensSaved;
       }
 
-      if (shouldStop) {
-        printf("PE %d block %d received stop signal.\n", my_pe, blockIdx.x);
-        break;
+      if (!shouldStop) {
+        float* remotePoolPtr =
+            remoteTokenMemPool_sym + slot * (TOKEN_SIZE + TOKEN_HEADER_SIZE);
+
+        float pe;
+        float tokenIdx;
+        rocshmem_float_get(&pe, remotePoolPtr, 1, my_pe);
+        rocshmem_float_get(&tokenIdx, remotePoolPtr + 1, 1, my_pe);
+        int peInt = (int)pe;
+        int tokenIdxInt = (int)tokenIdx;
+
+        remoteSlotPtr_shared = remotePoolPtr;
+        receivedPE_shared = peInt;
+        receivedTokenIdx_shared = tokenIdxInt;
+
+        printf(
+            "PE %d block %d received msg in slot %d: from PE %d, tokenIdx %d\n",
+            my_pe, blockIdx.x, slot, peInt, tokenIdxInt);
       }
 
-      float* remotePoolPtr =
-          remoteTokenMemPool_sym + slot * (TOKEN_SIZE + TOKEN_HEADER_SIZE);
-      float pe;
-      float tokenIdx;
-      rocshmem_float_get(&pe, remotePoolPtr, 1, my_pe);
-      rocshmem_float_get(&tokenIdx, remotePoolPtr + 1, 1, my_pe);
-      int peInt = (int)pe;
-      int tokenIdxInt = (int)tokenIdx;
-
-      printf(
-          "PE %d block %d received msg in slot %d: from PE %d, tokenIdx %d\n",
-          my_pe, blockIdx.x, slot, peInt, tokenIdxInt);
-
-      processMsg(peInt, tokenIdxInt, remotePoolPtr + TOKEN_HEADER_SIZE, output,
-                 remoteTokenMemPool_sym, remoteTokenMemPoolFirstFreeIdx_sym,
-                 remoteTokenMemPoolSlotStatus_sym, numOutputTokens_global);
+      stopSignal_shared = shouldStop;
     }
+
+    __syncthreads();
+
+    if (stopSignal_shared) {
+      if (threadIdx.x == 0) {
+        printf("PE %d block %d received stop signal.\n", my_pe, blockIdx.x);
+      }
+      break;
+    }
+
+    float* remotePoolPtr = remoteSlotPtr_shared;
+    int peInt = receivedPE_shared;
+    int tokenIdxInt = receivedTokenIdx_shared;
+
+    processMsg_block(peInt, tokenIdxInt, remotePoolPtr + TOKEN_HEADER_SIZE,
+                     output, remoteTokenMemPool_sym,
+                     remoteTokenMemPoolFirstFreeIdx_sym,
+                     remoteTokenMemPoolSlotStatus_sym, numOutputTokens_global);
+
+    __syncthreads();
   }
 
   __syncthreads();
