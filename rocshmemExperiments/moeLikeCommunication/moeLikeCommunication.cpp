@@ -213,7 +213,7 @@ __global__ void moeLikeCommKernel(
 
         const bool allTokensSaved =
             __hip_atomic_load(numOutputTokens_global, __ATOMIC_RELAXED,
-                              __HIP_MEMORY_SCOPE_AGENT) == TOKENS_PER_GPU;
+                              __HIP_MEMORY_SCOPE_AGENT) == numTokens;
 
         shouldStop = allDoneSending && allTokensSaved;
       }

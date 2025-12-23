@@ -1,4 +1,6 @@
-hipcc -c -fgpu-rdc -x hip moeLikeCommunication.cpp \
+rm -r -f moeLikeCommunicationApp
+
+hipcc -c -fgpu-rdc -O3 -x hip moeLikeCommunication.cpp \
   --offload-arch=gfx942:xnack- \
   -I/opt/rocm/include \
   -I/opt/mpi/install/ompi/include/
