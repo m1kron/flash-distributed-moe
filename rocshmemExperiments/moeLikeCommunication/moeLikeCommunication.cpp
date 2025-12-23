@@ -4,11 +4,11 @@
 #include <iostream>
 #include <rocshmem/rocshmem.hpp>
 
-const int TOKENS_PER_GPU = 4;
+const int TOKENS_PER_GPU = 128;
 const int TOKEN_SIZE = 2048;
 const int THREADS = 1024;
-const int BLOCKS = 8;
-const int ALLOC_SLOT_SIZE = 64;
+const int BLOCKS = 304;
+const int ALLOC_SLOT_SIZE = 1024;
 const int TOKEN_HEADER_SIZE = 2;  // -> pe | pe's token index.
 
 void PrintOutput(const std::vector<float>& output_host, int rank,
@@ -96,11 +96,11 @@ __device__ void sendMsg_block(int dst_pe, int msg_pe, int tokenIdx,
   if (threadIdx.x == 0) {
     const float my_pe_f = (float)msg_pe;
     const float tokenIdx_f = (float)tokenIdx;
-    rocshmem_float_put(remotePoolPtr, &my_pe_f, 1, dst_pe);
-    rocshmem_float_put(remotePoolPtr + 1, &tokenIdx_f, 1, dst_pe);
+    rocshmem_float_put_nbi(remotePoolPtr, &my_pe_f, 1, dst_pe);
+    rocshmem_float_put_nbi(remotePoolPtr + 1, &tokenIdx_f, 1, dst_pe);
   }
 
-  rocshmem_float_put_signal_wg(
+  rocshmem_float_put_signal_nbi_wg(
       remotePoolPtr + TOKEN_HEADER_SIZE, tokenData, TOKEN_SIZE,
       remoteTokenMemPoolSlotStatus_sym + idx, 1, ROCSHMEM_SIGNAL_SET, dst_pe);
 }
@@ -118,10 +118,12 @@ __device__ void processMsg_block(int src_pe, int tokenIdx, float* token,
     float* thisBlockOutput = output + tokenIdx * TOKEN_SIZE;
 
     // Save the processed token to the output buffer.
-    rocshmem_float_put_wg(thisBlockOutput, token, TOKEN_SIZE, rocshmem_my_pe());
+    for (int i = threadIdx.x; i < TOKEN_SIZE; i += blockDim.x) {
+      thisBlockOutput[i] = token[i];
+    }
 
     if (threadIdx.x == 0) {
-      __hip_atomic_fetch_add(numOutputTokens_global, 1, __ATOMIC_SEQ_CST,
+      __hip_atomic_fetch_add(numOutputTokens_global, 1, __ATOMIC_RELAXED,
                              __HIP_MEMORY_SCOPE_AGENT);
     }
   } else {
@@ -162,10 +164,8 @@ __global__ void moeLikeCommKernel(
                   remoteTokenMemPoolSlotStatus_sym);
 
     if (threadIdx.x == 0) {
-      // const int prev = atomicAdd(sendTokens_global, 1);
-
       const int prev = __hip_atomic_fetch_add(
-          sendTokens_global, 1, __ATOMIC_SEQ_CST, __HIP_MEMORY_SCOPE_AGENT);
+          sendTokens_global, 1, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_AGENT);
 
       // Last block informs all PEs that sending is done.
       if (prev == (numTokens - 1)) {
@@ -192,7 +192,7 @@ __global__ void moeLikeCommKernel(
                      blockIdx.x);
 
       const int slot =
-          __hip_atomic_fetch_add(reserverdSlotIdx_global, 1, __ATOMIC_SEQ_CST,
+          __hip_atomic_fetch_add(reserverdSlotIdx_global, 1, __ATOMIC_RELAXED,
                                  __HIP_MEMORY_SCOPE_AGENT);
 
       int slotStatus = rocshmem_uint64_atomic_fetch(
@@ -328,7 +328,10 @@ int main(int argc, char** argv) {
   CHECK_HIP(hipMalloc(&output_device, INPUT_SIZE * sizeof(float)));
 
   if (rank == 0) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    int delay = 2000;
+    std::cout << "Rank " << rank << " will delay kernel launch by " << delay
+              << " ms\n";
+    std::this_thread::sleep_for(std::chrono::milliseconds(delay));
     std::cout << "Rank " << rank << " launching kernel on device " << my_device
               << "\n";
   }
