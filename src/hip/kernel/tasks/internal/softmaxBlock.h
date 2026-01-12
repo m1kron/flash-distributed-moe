@@ -1,4 +1,5 @@
 #pragma once
+#include "src/hip/utils/hipWarpSize.h"
 
 namespace moe {
 namespace tasks {
@@ -19,7 +20,6 @@ namespace internal {
 template <int _SIZE, typename T = float>
 __device__ float Softmax_block(T input, void* sharedMemPool) {
   constexpr int COLS = _SIZE;
-  constexpr int WARP_SIZE = warpSize;  // ROCm wavefront size
   constexpr int NUM_WARPS = COLS / WARP_SIZE;
 
   const int tid = threadIdx.x;

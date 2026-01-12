@@ -1,4 +1,6 @@
 #pragma once
+#include <cassert>
+
 #include "refExpertFFN1.h"
 #include "refMoeGate.h"
 
