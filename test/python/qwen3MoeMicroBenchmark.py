@@ -10,28 +10,28 @@ NUM_EXPERTS = 128
 INTERMEDIATE_SIZE = 768
 
 
-def PrepareRandomWeights():
+def PrepareRandomWeights(wanted_dtype=torch.float32):
     hiddenSize = HIDDEN_SIZE
     experts = NUM_EXPERTS
     inter = INTERMEDIATE_SIZE
 
     gateWeights = torch.empty(
         (experts, hiddenSize),
-        dtype=torch.float32,
+        dtype=wanted_dtype,
         device=torch.device("cuda"),
     )
     torch.nn.init.uniform_(gateWeights, a=-0.1, b=0.1)
 
     ffn1Weights = torch.empty(
         (experts, 2 * inter, hiddenSize),
-        dtype=torch.float32,
+        dtype=wanted_dtype,
         device=torch.device("cuda"),
     )
     torch.nn.init.uniform_(ffn1Weights, a=-0.1, b=0.1)
 
     ffn2Weights = torch.empty(
         (experts, hiddenSize, inter),
-        dtype=torch.float32,
+        dtype=wanted_dtype,
         device=torch.device("cuda"),
     )
     torch.nn.init.uniform_(ffn2Weights, a=-0.1, b=0.1)
@@ -63,9 +63,10 @@ def DoBenchmarkForMoe(moe, vllmEnv, batchSize, hiddenSize, enableCudaGraph):
 
 if __name__ == "__main__":
     vllmEnv = vllmMinimalEnv.vllmMinimalEnv.VllmMinimalEnv()
-    vllmEnv.setup_vllm_env_with_default_configs(wanted_dtype=torch.float32)
+    wanted_dtype=torch.float32
+    vllmEnv.setup_vllm_env_with_default_configs(wanted_dtype=wanted_dtype)
 
-    gateW, ffn1W, ffn2W = PrepareRandomWeights()
+    gateW, ffn1W, ffn2W = PrepareRandomWeights(wanted_dtype=wanted_dtype)
 
     moe = vllmEnv.createMoeInstance(Qwen3MoeSparseMoeBlock, None, "test", False)
 
