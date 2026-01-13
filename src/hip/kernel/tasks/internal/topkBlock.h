@@ -71,10 +71,27 @@ __device__ void Topk8_block(T input, T* __restrict__ out_vals,
   }
 
   // After the sort: svals[0.._SIZE] are in descending order (largest at index
-  // 0). First TOPK threads write results.
+  // 0). First TOPK threads write indices and compute softmax of values.
   if (tid < TOPK) {
-    out_vals[tid] = svals[tid];
+    constexpr long long TOPK_MASK = 0xFF;  // Only first 8 lanes participate
+
+    // Cache value in register (single shared memory read)
+    T val = svals[tid];
     out_idx[tid] = sidx[tid];
+
+    // Softmax: numerically stable using warp shuffles (no shared memory).
+    // Step 1: Broadcast max (lane 0 has max since sorted descending)
+    T max_val = __shfl_sync(TOPK_MASK, val, 0);
+    T exp_val = __expf(val - max_val);  // Fast single-precision exp
+
+    // Step 2: Parallel reduction for sum of exponentials (log2(8) = 3 steps)
+    T exp_sum = exp_val;
+    exp_sum += __shfl_xor_sync(TOPK_MASK, exp_sum, 4);
+    exp_sum += __shfl_xor_sync(TOPK_MASK, exp_sum, 2);
+    exp_sum += __shfl_xor_sync(TOPK_MASK, exp_sum, 1);
+
+    // Step 3: Normalize with fast reciprocal multiply
+    out_vals[tid] = exp_val * __frcp_rn(exp_sum);
   }
   __syncthreads();
 }
