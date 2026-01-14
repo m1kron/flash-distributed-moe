@@ -3,8 +3,8 @@
 #include "src/hip/common/runtimeConfig.h"
 #include "src/hip/kernel/tasks/internal/gateBlock.h"
 #include "src/hip/kernel/tasks/internal/gemmImpl/gemmImplSelector.h"
-#include "test/cpp/moe/reference/refMoeGate.h"
-#include "test/cpp/utils/utils.h"
+#include "test/singleGPU/cpp/moe/reference/refMoeGate.h"
+#include "test/singleGPU/cpp/utils/utils.h"
 
 namespace {
 constexpr int M_SIZE = 48;

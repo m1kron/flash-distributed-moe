@@ -8,9 +8,9 @@
 #include "src/hip/taskSystem/taskManager.h"
 #include "src/hip/taskSystem/workerLoop.h"
 #include "src/hip/utils/hipDeviceUtils.h"
-#include "test/cpp/moe/reference/refExpertFFN1.h"
-#include "test/cpp/moe/reference/refMoeGate.h"
-#include "test/cpp/utils/utils.h"
+#include "test/singleGPU/cpp/moe/reference/refExpertFFN1.h"
+#include "test/singleGPU/cpp/moe/reference/refMoeGate.h"
+#include "test/singleGPU/cpp/utils/utils.h"
 
 namespace {
 constexpr float ERROR_ABS = 2e-5f;
