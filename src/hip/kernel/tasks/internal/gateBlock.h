@@ -1,5 +1,4 @@
 #pragma once
-#include "src/hip/kernel/tasks/internal/softmaxBlock.h"
 #include "src/hip/kernel/tasks/internal/topkBlock.h"
 
 namespace moe {
@@ -35,7 +34,7 @@ __device__ void gate_block(
       reinterpret_cast<int*>(sharedMemPoolBytes + sizeof(TType) * TOPK);
   int* nextPool = _outTopkIdx_shared + TOPK;
 
-  moe::tasks::internal::Topk8_block<T_GATE_GEMM_TILE::THREADS, TType>(
+  moe::tasks::internal::Topk8_softmax_block<T_GATE_GEMM_TILE::THREADS, TType>(
       out_regs[0], _outTopkVals_shared, _outTopkIdx_shared, nextPool);
 
   *outTopkVals_shared = _outTopkVals_shared;

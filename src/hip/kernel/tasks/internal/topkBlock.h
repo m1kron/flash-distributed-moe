@@ -11,7 +11,8 @@ namespace internal {
   - Assumes blockDim.x == _SIZE and each block handles one _SIZE-item tile.
   - Each thread initially owns one item: data[tid]
   - After the in-place bitonic sort in shared memory the array is sorted
-    in descending order (largest first). Threads 0..7 then write top-8
+    in descending order (largest first).
+  - Threads 0..7 then write compute softmax of top-8
     values/indices to out_vals/out_idx.
 
   Notes:
@@ -20,9 +21,9 @@ namespace internal {
 */
 
 template <int _SIZE, typename T = float>
-__device__ void Topk8_block(T input, T* __restrict__ out_vals,
-                            int* __restrict__ out_idx,
-                            void* __restrict__ sharedMemPool) {
+__device__ void Topk8_softmax_block(T input, T* __restrict__ out_vals,
+                                    int* __restrict__ out_idx,
+                                    void* __restrict__ sharedMemPool) {
   constexpr int THREADS = _SIZE;
   constexpr int TOPK = 8;
 
