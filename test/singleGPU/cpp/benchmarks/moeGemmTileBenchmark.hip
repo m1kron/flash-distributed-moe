@@ -3,9 +3,9 @@
 #include "src/hip/common/metadata.h"
 #include "src/hip/kernel/tasks/internal/gemmImpl/gemmImplSelector.h"
 #include "src/hip/kernel/tasks/internal/writeGemmTileBlock.h"
-#include "test/cpp/benchmarks/benchmarkUtils.h"
-#include "test/cpp/moe/reference/refGemm.h"
-#include "test/cpp/utils/utils.h"
+#include "test/singleGPU/cpp/benchmarks/benchmarkUtils.h"
+#include "test/singleGPU/cpp/moe/reference/refGemm.h"
+#include "test/singleGPU/cpp/utils/utils.h"
 
 namespace {
 static constexpr float ABS_ERROR = 1e-3f;

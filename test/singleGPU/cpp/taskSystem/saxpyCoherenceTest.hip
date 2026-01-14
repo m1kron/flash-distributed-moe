@@ -1,9 +1,9 @@
 #include <vector>
 
-#include "../../../src/hip/hipHostCommon.h"
-#include "../../../src/hip/taskSystem/taskManager.h"
-#include "../../../src/hip/utils/hipDeviceUtils.h"
-#include "../utils/utils.h"
+#include "src/hip/hipHostCommon.h"
+#include "src/hip/taskSystem/taskManager.h"
+#include "src/hip/utils/hipDeviceUtils.h"
+#include "test/singleGPU/cpp/utils/utils.h"
 #include "gtest/gtest.h"
 
 namespace {

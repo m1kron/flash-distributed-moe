@@ -2,8 +2,8 @@
 
 #include "include/iMoeKernelLauncher.h"
 #include "src/hip/common/metadata.h"
-#include "test/cpp/moe/reference/refFullMoe.h"
-#include "test/cpp/utils/utils.h"
+#include "test/singleGPU/cpp/moe/reference/refFullMoe.h"
+#include "test/singleGPU/cpp/utils/utils.h"
 
 namespace {
 constexpr float ERROR_ABS = 1e-5f;
