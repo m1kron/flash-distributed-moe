@@ -1,4 +1,4 @@
-set(app_name unittests_app)
+set(app_name singleGPU_unittests_app)
 
 cmake_minimum_required(VERSION 3.21 FATAL_ERROR)
 project(${app_name} LANGUAGES CXX)
