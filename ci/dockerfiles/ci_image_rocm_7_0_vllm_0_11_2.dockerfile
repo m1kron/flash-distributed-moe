@@ -1,4 +1,4 @@
-FROM rocm/vllm:rocm6.4.1_vllm_0.10.0_20250812
+FROM rocm/vllm:rocm7.0.0_vllm_0.11.2_20251210
 
 RUN export DEBIAN_FRONTEND=noninteractive; \
     apt-get update -qq \

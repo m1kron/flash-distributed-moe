@@ -20,14 +20,14 @@ inline MoeGateOutput refMoeGate(const T* tokens, const T* gateWeights,
   auto ref =
       test::refGemm(tokens, gateWeights, tokensNum, expertsNum, hiddenSize);
 
-  test::refSoftmaxRowOnlineInplace(ref.data(), tokensNum, expertsNum);
-
   MoeGateOutput out;
   out.topkIdx.resize(topk * tokensNum);
   out.topkVals.resize(topk * tokensNum);
 
   test::refTopK8PerRow(ref.data(), tokensNum, expertsNum, out.topkVals.data(),
                        out.topkIdx.data(), topk);
+
+  test::refSoftmaxRowOnlineInplace(out.topkVals.data(), tokensNum, topk);
 
   return out;
 }

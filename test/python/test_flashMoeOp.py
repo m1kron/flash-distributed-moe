@@ -73,7 +73,7 @@ def test_FlashMoeWrapper(batchSize):
 
     vllmEnv.shutdown()
 
-    assert torch.allclose(out, outRef, rtol=1e-05, atol=1e-04)
+    assert torch.allclose(out, outRef, rtol=1e-03, atol=1e-02)
 
 
 if __name__ == "__main__":

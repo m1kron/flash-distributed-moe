@@ -58,8 +58,9 @@ class VllmMinimalEnvMoeExecutionWrapper(torch.nn.Module):
         self.forwardCallBack = self._forwardStandard
              
     def _forwardStandard(self, input):
-        with set_forward_context(None, self.vllm_config):
-            return self.module(input)
+        with set_current_vllm_config(self.vllm_config):
+            with set_forward_context(None, self.vllm_config):
+                return self.module(input)
         
     def _forwardCudaGraph(self, input):
         self.graph.replay()
@@ -77,18 +78,14 @@ class VllmMinimalEnv:
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.ops = []
 
-    def setup_vllm_env_with_default_configs(self, wanted_dtype=None):
-        self.engine_args = EngineArgs(model="Qwen/Qwen3-30B-A3B", dtype="float16")
+    def setup_vllm_env_with_default_configs(self, wanted_dtype=torch.float32):
+        self.engine_args = EngineArgs(model="Qwen/Qwen3-30B-A3B", dtype=wanted_dtype)
         self.vllm_config = self.engine_args.create_engine_config()
 
-        if wanted_dtype == None:
-            wanted_dtype = self.vllm_config.model_config.dtype
-            
         self.moe_dtype = wanted_dtype
-
         self.config = Qwen3MoeConfig()
         self.config.architectures = ["Qwen3MoeForCausalLM"]
-        self.config.torch_dtype = self.moe_dtype
+        self.config.dtype = self.moe_dtype
         self.config.bos_token_id = 151643
         self.config.eos_token_id = 151645
         self.config.has_no_defaults_at_init = False
@@ -100,10 +97,8 @@ class VllmMinimalEnv:
     def createMoeInstance(self, klass, quant_config, prefix, enable_eplb):
         with set_current_vllm_config(self.vllm_config):
             moe = klass(
-                config=self.config,
-                quant_config=quant_config,
+                vllm_config=self.vllm_config,
                 prefix=prefix,
-                enable_eplb=enable_eplb,
             )
         moe.to(self.device)
         return VllmMinimalEnvMoeExecutionWrapper(moe, self.vllm_config)

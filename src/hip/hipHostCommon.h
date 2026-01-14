@@ -2,7 +2,8 @@
 
 #include <assert.h>
 #include <hip/hip_runtime.h>
-#include <string.h>
+
+#include <cstdio>
 
 #define __FILENAME__ \
   (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)

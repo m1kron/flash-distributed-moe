@@ -1,5 +1,7 @@
 #include <hip/hip_runtime.h>
 
+#include <cassert>
+
 #include "staticGemmKernel.h"
 #include "tileGemm.h"
 
