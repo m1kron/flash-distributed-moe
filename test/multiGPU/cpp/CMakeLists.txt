@@ -36,6 +36,11 @@ ExternalProject_Add(
   GIT_TAG develop
   CMAKE_ARGS
     -DCMAKE_INSTALL_PREFIX=${ROCSHMEM_INSTALL_DIR}
+    -DCMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}
+    -DMPI_CXX_COMPILER=${MPI_CXX_COMPILER}
+    -DMPI_CXX_INCLUDE_PATH=${MPI_CXX_INCLUDE_PATH}
+    -DMPI_CXX_LIBRARIES=${MPI_CXX_LIBRARIES}
+    -Dhsa-runtime64_DIR=${hsa-runtime64_DIR}
     -DBUILD_CODE_COVERAGE=OFF
     -DCMAKE_BUILD_TYPE=Release
     -DCMAKE_VERBOSE_MAKEFILE=OFF 
@@ -63,6 +68,7 @@ add_library(rocshmem STATIC IMPORTED)
 set_target_properties(rocshmem PROPERTIES
   IMPORTED_LOCATION ${ROCSHMEM_INSTALL_DIR}/lib/librocshmem.a
   INTERFACE_INCLUDE_DIRECTORIES ${ROCSHMEM_INSTALL_DIR}/include
+  INTERFACE_LINK_LIBRARIES "MPI::MPI_CXX;hsa-runtime64::hsa-runtime64"
 )
 add_dependencies(rocshmem rocshmem_external)
 
@@ -71,12 +77,12 @@ file(GLOB_RECURSE HIP_SOURCES ${PROJECT_SOURCE_DIR}/*.hip)
 set_source_files_properties(${HIP_SOURCES} ${CPP_SOURCES} PROPERTIES LANGUAGE HIP)
 add_executable(${app_name} ${CPP_SOURCES} ${HIP_SOURCES})
 
-target_include_directories(${app_name} PRIVATE ${FLASH_MOE_LIB_INCLUDE} ${ROCSHMEM_INSTALL_DIR}/include ${MPI_CXX_INCLUDE_PATH})
+target_include_directories(${app_name} PRIVATE ${FLASH_MOE_LIB_INCLUDE} ${ROCSHMEM_INSTALL_DIR}/include)
 target_compile_definitions(${app_name} PRIVATE __HIP_PLATFORM_AMD__)
 
 # rocSHMEM requires relocatable device code
 target_compile_options(${app_name} PRIVATE -fgpu-rdc)
 target_link_options(${app_name} PRIVATE -fgpu-rdc)
 
-add_dependencies(${app_name} rocshmem_external)
-target_link_libraries(${app_name} PRIVATE hip::host hip::device ${FLASH_MOE_LIB_NAME} gtest_main gtest rocshmem MPI::MPI_CXX hsa-runtime64::hsa-runtime64)
+add_dependencies(${app_name} rocshmem)
+target_link_libraries(${app_name} PRIVATE hip::host hip::device ${FLASH_MOE_LIB_NAME} gtest_main gtest rocshmem)
