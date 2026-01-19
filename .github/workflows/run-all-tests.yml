@@ -6,7 +6,7 @@ jobs:
   Run-all-tests:
     uses: makora-ai/CI_setup_test_project/.github/workflows/build-docker-and-run-script-rw.yml@main
     with:
-      docker-image-name: ci_image_rocm_7_0_vllm_0_11_2
+      docker-image-name: ci_image_rocm_7_0_vllm_0_11_2_mpi
       script-path: ./scripts/buildAndRun.sh
       registry-port: 5001
       run-mi250-jobs: false
