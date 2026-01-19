@@ -34,8 +34,8 @@ RUN git clone https://github.com/ROCm/ucx.git && \
     cd .. && \
     rm -rf ucx
 
-RUN git clone --recursive https://github.com/open-mpi/ompi.git -b v5.0.x && \
-    cd ompi && \
+RUN git clone --recursive https://github.com/ROCm/ompi.git && \
+    cd ompi && git checkout 697a596dde68815fe50db3c2a75a42ddb41b5ef4 && \
     ./autogen.pl && \
     ./configure --prefix=/opt/mpi/ompi --with-rocm=/opt/rocm --with-ucx=/opt/mpi/ucx --disable-oshmem --with-prrte=internal --with-hwloc=internal --with-libevent=internal --without-cuda --disable-mpi-fortran --without-ofi && \
     make -j 32 && \
@@ -45,4 +45,4 @@ RUN git clone --recursive https://github.com/open-mpi/ompi.git -b v5.0.x && \
 
 WORKDIR /
 
-RUN echo "export LD_LIBRARY_PATH=/opt/mpi/ompi/lib:${LD_LIBRARY_PATH}" >> ~/.bashrc
+ENV LD_LIBRARY_PATH=/opt/mpi/ompi/lib/openmpi:${LD_LIBRARY_PATH}
