@@ -46,6 +46,8 @@ RUN git clone --recursive https://github.com/ROCm/ompi.git && \
 
 WORKDIR /
 
-ENV LD_LIBRARY_PATH="/opt/mpi/ompi:$LD_LIBRARY_PATH"
+ENV LD_LIBRARY_PATH="/opt/mpi/ompi/lib:$LD_LIBRARY_PATH"
+ENV PATH="/opt/mpi/ompi/bin:$PATH"
 
-RUN ls /opt/mpi/ompi/
+RUN ls /opt/mpi/ompi/lib/
+RUN ls /opt/mpi/ompi/bin/
