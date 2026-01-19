@@ -21,68 +21,16 @@ FetchContent_Declare(
   GIT_TAG main)
 FetchContent_MakeAvailable(googletest)
 
-# ------ ROCSHMEM -------------------
-list(APPEND CMAKE_PREFIX_PATH "/opt/mpi/install/ompi")
-find_package(MPI REQUIRED)
-
-set(ROCSHMEM_INSTALL_DIR ${CMAKE_BINARY_DIR}/_deps/rocshmem-install)
-
-# Create include directory at configure time to satisfy CMake validation
-file(MAKE_DIRECTORY ${ROCSHMEM_INSTALL_DIR}/include)
-
-ExternalProject_Add(
-  rocshmem_external
-  GIT_REPOSITORY https://github.com/ROCm/rocSHMEM.git
-  GIT_TAG develop
-  CMAKE_ARGS
-    -DCMAKE_INSTALL_PREFIX=${ROCSHMEM_INSTALL_DIR}
-    -DCMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}
-    -DMPI_CXX_COMPILER=${MPI_CXX_COMPILER}
-    -DMPI_CXX_INCLUDE_PATH=${MPI_CXX_INCLUDE_PATH}
-    -DMPI_CXX_LIBRARIES=${MPI_CXX_LIBRARIES}
-    -Dhsa-runtime64_DIR=${hsa-runtime64_DIR}
-    -DBUILD_CODE_COVERAGE=OFF
-    -DCMAKE_BUILD_TYPE=Release
-    -DCMAKE_VERBOSE_MAKEFILE=OFF 
-    -DCMAKE_POSITION_INDEPENDENT_CODE=ON 
-    -DBUILD_FUNCTIONAL_TESTS=OFF
-    -DBUILD_UNIT_TESTS=OFF
-    -DBUILD_TOOLS=OFF
-    -DBUILD_EXAMPLES=OFF
-    -DDEBUG=OFF 
-    -DPROFILE=OFF 
-    -DUSE_GDA=OFF 
-    -DUSE_RO=OFF 
-    -DUSE_IPC=ON 
-    -DUSE_THREADS=OFF 
-    -DUSE_WF_COAL=OFF 
-    -DUSE_HDP_FLUSH=OFF 
-    -DUSE_HDP_FLUSH_HOST_SIDE=OFF 
-    -DUSE_SINGLE_NODE=ON
-    
-  BUILD_BYPRODUCTS ${ROCSHMEM_INSTALL_DIR}/lib/librocshmem.a
-)
-
-# Create imported target for rocshmem
-add_library(rocshmem STATIC IMPORTED)
-set_target_properties(rocshmem PROPERTIES
-  IMPORTED_LOCATION ${ROCSHMEM_INSTALL_DIR}/lib/librocshmem.a
-  INTERFACE_INCLUDE_DIRECTORIES ${ROCSHMEM_INSTALL_DIR}/include
-  INTERFACE_LINK_LIBRARIES "MPI::MPI_CXX;Threads::Threads;hip::device;hip::host;dl;hsa-runtime64::hsa-runtime64;-fgpu-rdc"
-  INTERFACE_COMPILE_OPTIONS "-fgpu-rdc;-fgpu-rdc"
-)
-add_dependencies(rocshmem rocshmem_external)
-
-set(rocshmem_INCLUDE_DIRS ${ROCSHMEM_INSTALL_DIR}/include)
-
-# ------ ROCSHMEM -------------------
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake")
+include(buildRocshmem)
+build_rocshmem(GIT_TAG develop)
 
 file(GLOB_RECURSE CPP_SOURCES ${PROJECT_SOURCE_DIR}/*.cpp)
 file(GLOB_RECURSE HIP_SOURCES ${PROJECT_SOURCE_DIR}/*.hip)
 set_source_files_properties(${HIP_SOURCES} ${CPP_SOURCES} PROPERTIES LANGUAGE HIP)
 add_executable(${app_name} ${CPP_SOURCES} ${HIP_SOURCES})
 
-target_include_directories(${app_name} PRIVATE ${FLASH_MOE_LIB_INCLUDE} ${rocshmem_INCLUDE_DIRS})
+target_include_directories(${app_name} PRIVATE ${FLASH_MOE_LIB_INCLUDE})
 target_compile_definitions(${app_name} PRIVATE __HIP_PLATFORM_AMD__)
 
 add_dependencies(${app_name} rocshmem)
