@@ -36,6 +36,7 @@ RUN git clone https://github.com/ROCm/ucx.git && \
 
 RUN git clone --recursive https://github.com/ROCm/ompi.git && \
     cd ompi && git checkout 697a596dde68815fe50db3c2a75a42ddb41b5ef4 && \
+    git submodule update --init --recursive && \
     ./autogen.pl && \
     ./configure --prefix=/opt/mpi/ompi --with-rocm=/opt/rocm --with-ucx=/opt/mpi/ucx --disable-oshmem --with-prrte=internal --with-hwloc=internal --with-libevent=internal --without-cuda --disable-mpi-fortran --without-ofi && \
     make -j 32 && \
