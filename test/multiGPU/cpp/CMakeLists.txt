@@ -21,11 +21,11 @@ FetchContent_Declare(
   GIT_TAG main)
 FetchContent_MakeAvailable(googletest)
 
-
+# ------ ROCSHMEM -------------------
 list(APPEND CMAKE_PREFIX_PATH "/opt/mpi/install/ompi")
 find_package(MPI REQUIRED)
 
-set(ROCSHMEM_INSTALL_DIR ${CMAKE_BINARY_DIR}/rocshmem-install)
+set(ROCSHMEM_INSTALL_DIR ${CMAKE_BINARY_DIR}/_deps/rocshmem-install)
 
 # Create include directory at configure time to satisfy CMake validation
 file(MAKE_DIRECTORY ${ROCSHMEM_INSTALL_DIR}/include)
@@ -68,21 +68,22 @@ add_library(rocshmem STATIC IMPORTED)
 set_target_properties(rocshmem PROPERTIES
   IMPORTED_LOCATION ${ROCSHMEM_INSTALL_DIR}/lib/librocshmem.a
   INTERFACE_INCLUDE_DIRECTORIES ${ROCSHMEM_INSTALL_DIR}/include
-  INTERFACE_LINK_LIBRARIES "MPI::MPI_CXX;hsa-runtime64::hsa-runtime64"
+  INTERFACE_LINK_LIBRARIES "MPI::MPI_CXX;Threads::Threads;hip::device;hip::host;dl;hsa-runtime64::hsa-runtime64;-fgpu-rdc"
+  INTERFACE_COMPILE_OPTIONS "-fgpu-rdc;-fgpu-rdc"
 )
 add_dependencies(rocshmem rocshmem_external)
+
+set(rocshmem_INCLUDE_DIRS ${ROCSHMEM_INSTALL_DIR}/include)
+
+# ------ ROCSHMEM -------------------
 
 file(GLOB_RECURSE CPP_SOURCES ${PROJECT_SOURCE_DIR}/*.cpp)
 file(GLOB_RECURSE HIP_SOURCES ${PROJECT_SOURCE_DIR}/*.hip)
 set_source_files_properties(${HIP_SOURCES} ${CPP_SOURCES} PROPERTIES LANGUAGE HIP)
 add_executable(${app_name} ${CPP_SOURCES} ${HIP_SOURCES})
 
-target_include_directories(${app_name} PRIVATE ${FLASH_MOE_LIB_INCLUDE} ${ROCSHMEM_INSTALL_DIR}/include)
+target_include_directories(${app_name} PRIVATE ${FLASH_MOE_LIB_INCLUDE} ${rocshmem_INCLUDE_DIRS})
 target_compile_definitions(${app_name} PRIVATE __HIP_PLATFORM_AMD__)
-
-# rocSHMEM requires relocatable device code
-target_compile_options(${app_name} PRIVATE -fgpu-rdc)
-target_link_options(${app_name} PRIVATE -fgpu-rdc)
 
 add_dependencies(${app_name} rocshmem)
 target_link_libraries(${app_name} PRIVATE hip::host hip::device ${FLASH_MOE_LIB_NAME} gtest_main gtest rocshmem)
