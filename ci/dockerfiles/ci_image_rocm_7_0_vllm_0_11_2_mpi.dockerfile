@@ -13,7 +13,8 @@ RUN export DEBIAN_FRONTEND=noninteractive; \
         wget \
         cmake \
         gdb \
-        vim 
+        vim \
+        autoconf 
 
 SHELL ["/bin/bash", "-exo", "pipefail", "-c"]
 
