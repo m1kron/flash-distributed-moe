@@ -47,4 +47,4 @@ WORKDIR /
 
 ENV LD_LIBRARY_PATH="/opt/mpi/ompi/lib/openmpi:$LD_LIBRARY_PATH"
 
-RUN ls /opt/mpi/ompi/lib/openmpi
+RUN ls /opt/mpi/ompi/
