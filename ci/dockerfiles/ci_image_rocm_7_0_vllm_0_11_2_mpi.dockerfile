@@ -22,7 +22,8 @@ RUN export DEBIAN_FRONTEND=noninteractive; \
 
 SHELL ["/bin/bash", "-exo", "pipefail", "-c"]
 
-# From rocshmem/install_dependencies.sh
+# Compile dependencies for rocshmem:
+# From rocshmem/install_dependencies.sh:
 WORKDIR /tmp
 RUN git clone https://github.com/ROCm/ucx.git && \
     cd ucx && \
@@ -48,6 +49,3 @@ WORKDIR /
 
 ENV LD_LIBRARY_PATH="/opt/mpi/ompi/lib:$LD_LIBRARY_PATH"
 ENV PATH="/opt/mpi/ompi/bin:$PATH"
-
-RUN ls /opt/mpi/ompi/lib/
-RUN ls /opt/mpi/ompi/bin/
