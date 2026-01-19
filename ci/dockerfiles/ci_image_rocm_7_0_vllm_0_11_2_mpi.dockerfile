@@ -14,7 +14,11 @@ RUN export DEBIAN_FRONTEND=noninteractive; \
         cmake \
         gdb \
         vim \
-        autoconf 
+        autoconf \
+        automake \
+        libtool \
+        texinfo \
+        flex
 
 SHELL ["/bin/bash", "-exo", "pipefail", "-c"]
 
