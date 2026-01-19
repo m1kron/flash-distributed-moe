@@ -15,6 +15,8 @@ RUN export DEBIAN_FRONTEND=noninteractive; \
         gdb \
         vim 
 
+SHELL ["/bin/bash", "-exo", "pipefail", "-c"]
+
 RUN git clone https://github.com/ROCm/ucx.git -b v1.17.x
 RUN ucx/autogen.sh
 RUN ucx/configure --prefix=/opt/mpi/ucx --with-rocm=/opt/rocm --enable-mt
