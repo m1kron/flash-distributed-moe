@@ -24,13 +24,12 @@ SHELL ["/bin/bash", "-exo", "pipefail", "-c"]
 
 # From rocshmem/install_dependencies.sh
 RUN git clone https://github.com/ROCm/ucx.git
-RUN cd ucx
+WORKDIR /ucx
 RUN git checkout 18770fdc1c3b5de202d14a088a14b734d2c4bbf3
 RUN ./autogen.sh
 RUN ./contrib/configure-release --prefix=/opt/mpi/ucx --with-rocm=/opt/rocm --enable-mt --without-go --without-java --without-cuda --without-knem
 RUN make -j
 RUN make install
-RUN cd ..
 RUN rm -rf ucx
 
 RUN git clone --recursive https://github.com/open-mpi/ompi.git -b v5.0.x
