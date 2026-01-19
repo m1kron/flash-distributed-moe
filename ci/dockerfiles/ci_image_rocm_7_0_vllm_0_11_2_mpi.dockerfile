@@ -16,12 +16,10 @@ RUN export DEBIAN_FRONTEND=noninteractive; \
         vim 
 
 RUN git clone https://github.com/ROCm/ucx.git -b v1.17.x
-RUN cd ucx
-RUN ./autogen.sh
-RUN ./configure --prefix=/opt/mpi/ucx --with-rocm=/opt/rocm --enable-mt
+RUN ucx/autogen.sh
+RUN ucx/configure --prefix=/opt/mpi/ucx --with-rocm=/opt/rocm --enable-mt
 RUN make -j 8
 RUN make -j 8 install
-RUN cd ..
 RUN rm -rf ucx
 
 RUN git clone --recursive https://github.com/open-mpi/ompi.git -b v5.0.x
