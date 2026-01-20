@@ -52,6 +52,46 @@ torch.manual_seed(SEED)
 torch.cuda.manual_seed(SEED)
 torch.cuda.manual_seed_all(SEED)  # For multi-GPU setups
 np.random.seed(SEED)
+import vllm.model_executor.models.qwen3_moe
+
+import torch.distributed as dist
+
+class FlashMoeWrapper(vllm.model_executor.models.qwen3_moe.Qwen3MoeSparseMoeBlock):
+
+    def __init__(
+        self,
+        vllm_config,
+        prefix: str = "",
+    ):
+        super().__init__(vllm_config, prefix)
+        print("-----------------------------------------------------------------------------------------------------------")
+        
+        ep_group = self.ep_group
+        ep_rank =self.ep_rank
+        ep_size =self.ep_size
+        
+        id = (
+                torch.tensor(123456)
+                if ep_rank == 0
+                else torch.tensor(-1)
+            )
+        
+        dist.broadcast(
+            id,
+            src=dist.get_process_group_ranks(ep_group)[0],
+            group=ep_group,
+        )
+        
+        print(f"ep_rank: {ep_rank}, ep_size: {ep_size}, id: {id}")
+
+    
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        #print("Wrapper forward called. -----------------------------------------------------------------------------------------------------------")
+        return super().forward(hidden_states)
+
+# Monkey patch:
+vllm.model_executor.models.qwen3_moe.Qwen3MoeSparseMoeBlock = FlashMoeWrapper
+
 
 def create_qwen3_moe_config(
     output_dir: str,
@@ -123,6 +163,7 @@ def create_parser():
         skip_tokenizer_init=True,
         load_format="dummy",
         gpu_memory_utilization=0.1,
+        enforce_eager=True,
     )
 
     # Add DP-specific args (separate from engine args to avoid conflicts)
