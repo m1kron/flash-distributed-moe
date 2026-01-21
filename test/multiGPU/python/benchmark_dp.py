@@ -106,6 +106,12 @@ class FlashMoeWrapper(vllm.model_executor.models.qwen3_moe.Qwen3MoeSparseMoeBloc
         uniqueid = broadcast_objects[0]
 
         print(f"ep_rank: {ep_rank}, ep_size: {ep_size}, uniqueid: {uniqueid}")
+        
+        self.launcher.initializeDistributed(
+            uniqueid,
+            ep_rank,
+            ep_size
+        )
 
 
     

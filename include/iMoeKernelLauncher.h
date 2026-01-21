@@ -25,6 +25,9 @@ struct DistributedUniqueId {
 // Gets the distributed unique id.
 extern "C" moe::DistributedUniqueId getDistributedUniqueId();
 
+extern "C" void InitializeDistributed(const moe::DistributedUniqueId& uid, int rank,
+                                    int worldSize);
+
 // Creates launcher.
 extern "C" hipError_t CreateLauncher(moe::IMoeKernelLauncher** launcher,
                                      const void* gateWeights,

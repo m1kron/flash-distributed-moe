@@ -25,11 +25,37 @@ extern "C" moe::DistributedUniqueId getDistributedUniqueId() {
   rocshmem::rocshmem_uniqueid_t uid;
   ROCSHMEM_ERROR_ASSERT(rocshmem::rocshmem_get_uniqueid(&uid));
 
-  static_assert(sizeof(rocshmem::rocshmem_uniqueid_t) == sizeof(moe::DistributedUniqueId));
+  static_assert(sizeof(rocshmem::rocshmem_uniqueid_t) ==
+                sizeof(moe::DistributedUniqueId));
 
   moe::DistributedUniqueId dist_uid;
   memcpy(dist_uid.data, uid.data(), sizeof(dist_uid.data));
   return dist_uid;
+}
+
+////////////////////////////////////////////////////////////////////
+extern "C" void InitializeDistributed(const moe::DistributedUniqueId& uid,
+                                      int rank, int worldSize) {
+  rocshmem::rocshmem_uniqueid_t roc_uid;
+  memcpy(roc_uid.data(), uid.data, sizeof(uid.data));
+
+  rocshmem::rocshmem_init_attr_t attr;
+
+  ROCSHMEM_ERROR_ASSERT(rocshmem::rocshmem_set_attr_uniqueid_args(
+      rank, worldSize, &roc_uid, &attr));
+  ROCSHMEM_ERROR_ASSERT(rocshmem::rocshmem_init_attr(
+      rocshmem::ROCSHMEM_INIT_WITH_UNIQUEID, &attr));
+
+  const int rocshmem_rank = rocshmem::rocshmem_my_pe();
+  const int rocshmem_size = rocshmem::rocshmem_n_pes();
+
+  int GPU_id;
+  hipGetDevice(&GPU_id);
+
+  printf("[Rank %d/%d] Initialized rocSHMEM (rocSHMEM rank %d/%d) on GPU %d\n",
+         rank, worldSize, rocshmem_rank, rocshmem_size, GPU_id);
+
+  rocshmem::rocshmem_finalize();
 }
 
 ////////////////////////////////////////////////////////////////////
