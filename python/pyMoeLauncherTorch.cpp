@@ -5,6 +5,7 @@
 
 #include <stdexcept>
 #include <string>
+#include <cstring>
 
 #include "iMoeKernelLauncher.h"
 
@@ -31,6 +32,19 @@ namespace py = pybind11;
 
 class MoeKernelLauncherWrapper {
  public:
+  // Returns a 128-byte distributed unique id as Python bytes.
+  // If empty is true, returns zero-initialized id without querying ROC-SHMEM.
+  static py::bytes getDistributedUniqueId(bool empty) {
+    moe::DistributedUniqueId id;
+    if (empty) {
+      std::memset(id.data, 0, sizeof(id.data));
+    } else {
+      id = ::getDistributedUniqueId();
+    }
+    return py::bytes(reinterpret_cast<const char*>(id.data),
+                     static_cast<size_t>(sizeof(id.data)));
+  }
+
   void launch(const at::Tensor& tokens, const at::Tensor& output) {
     if (!ptr_) throw std::runtime_error("Launcher was destroyed");
 
@@ -98,6 +112,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 
   py::class_<MoeKernelLauncherWrapper>(m, "MoeKernelLauncher")
       .def(py::init())
+     .def_static("getDistributedUniqueId",
+        &MoeKernelLauncherWrapper::getDistributedUniqueId,
+        py::arg("empty") = false,
+      "Returns a 128-byte rocSHMEM unique id as bytes. If empty=True, returns zeros.")
       .def("launch", &MoeKernelLauncherWrapper::launch, py::arg("tokens"),
            py::arg("output"))
       .def("destroy", &MoeKernelLauncherWrapper::destroy)

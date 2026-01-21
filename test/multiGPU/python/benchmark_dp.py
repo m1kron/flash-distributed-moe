@@ -19,15 +19,15 @@ The idea of the benchmark is to setup data parallel, expert parallel vllm offlin
 where the each rank processes a subset of the total prompts, and measure the throughput and latency.
 """
 
-import torch
-import rocprofsys
+# import torch
+# import rocprofsys
 
-@rocprofsys.profile()
-def warmup_omnitrace():
-    """Dummy method getting omnitrace initialized before hip runtime"""
-    torch.manual_seed(42)
+# @rocprofsys.profile()
+# def warmup_omnitrace():
+#     """Dummy method getting omnitrace initialized before hip runtime"""
+#     torch.manual_seed(42)
     
-warmup_omnitrace()
+# warmup_omnitrace()
 
 import os
 import tempfile
@@ -56,6 +56,8 @@ import vllm.model_executor.models.qwen3_moe
 
 import torch.distributed as dist
 
+import flashMoeLauncher
+
 class FlashMoeWrapper(vllm.model_executor.models.qwen3_moe.Qwen3MoeSparseMoeBlock):
 
     def __init__(
@@ -70,19 +72,41 @@ class FlashMoeWrapper(vllm.model_executor.models.qwen3_moe.Qwen3MoeSparseMoeBloc
         ep_rank =self.ep_rank
         ep_size =self.ep_size
         
-        id = (
-                torch.tensor(123456)
-                if ep_rank == 0
-                else torch.tensor(-1)
-            )
+        # id = (
+        #         torch.tensor(123456)
+        #         if ep_rank == 0
+        #         else torch.tensor(-1)
+        #     )
         
-        dist.broadcast(
-            id,
-            src=dist.get_process_group_ranks(ep_group)[0],
-            group=ep_group,
-        )
+        # dist.broadcast(
+        #     id,
+        #     src=dist.get_process_group_ranks(ep_group)[0],
+        #     group=ep_group,
+        # )
         
-        print(f"ep_rank: {ep_rank}, ep_size: {ep_size}, id: {id}")
+        # print(f"ep_rank: {ep_rank}, ep_size: {ep_size}, id: {id}")
+        
+        maxTokens = 16
+        
+        self.launcher = flashMoeLauncher.MoeKernelLauncher()
+
+        # Get distributed unique id as bytes and broadcast using broadcast_object_list        
+        uniqueid = self.launcher.getDistributedUniqueId(empty=True)
+        if ep_rank == 0:
+            uniqueid = self.launcher.getDistributedUniqueId()
+            broadcast_objects = [uniqueid]
+        else:
+            broadcast_objects = [None]
+
+        dist.broadcast_object_list(broadcast_objects, 
+                                   src=dist.get_process_group_ranks(ep_group)[0], 
+                                   group=ep_group)
+        dist.barrier(ep_group)
+        
+        uniqueid = broadcast_objects[0]
+
+        print(f"ep_rank: {ep_rank}, ep_size: {ep_size}, uniqueid: {uniqueid}")
+
 
     
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
