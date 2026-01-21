@@ -24,8 +24,9 @@ class FlashMoeBlockWrapper(torch.nn.Module):
         self.launcher.destroy()
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        hidden_dim = hidden_states.shape[-1]
-        if hidden_dim > self.maxTokens:
+        num_tokens, _ = hidden_states.shape
+        
+        if num_tokens <= self.maxTokens:
             tokens = hidden_states
 
             # Inplace calc -> output_mem = input_mem
