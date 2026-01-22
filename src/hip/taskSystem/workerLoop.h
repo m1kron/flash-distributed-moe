@@ -18,7 +18,7 @@ __device__ void workerTaskSystemLoop_block(TaskManagerType& globalTaskManager,
     // Get new task.
     const bool noMoreTasks = globalTaskManager.WaitAndPopTask_warp(task_s);
 
-    if (threadIdx.x == 112) {
+    if (threadIdx.x == 21) {
       HIP_DEVICE_LOG("Worker: Got new task\n");
     }
 
