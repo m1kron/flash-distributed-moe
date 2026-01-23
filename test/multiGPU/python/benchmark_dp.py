@@ -71,7 +71,7 @@ class FlashMoeWrapper(vllm.model_executor.models.qwen3_moe.Qwen3MoeSparseMoeBloc
         ep_rank =self.ep_rank
         ep_size =self.ep_size
         
-        maxTokens = 16
+        maxTokens = 8
         
         self.launcher = flashMoeLauncher.MoeKernelLauncher()
         self.maxTokens = maxTokens
@@ -113,20 +113,27 @@ class FlashMoeWrapper(vllm.model_executor.models.qwen3_moe.Qwen3MoeSparseMoeBloc
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         num_tokens, _ = hidden_states.shape
-        print(f"FlashMoeBlockWrapper: num_tokens={num_tokens}, maxTokens={self.maxTokens}")
         if self.ep_size == 1 and num_tokens < self.maxTokens:
             tokens = hidden_states
 
-            print("Using Flash Moe Kernel Launcher for MoE forward")
+            #print("Using Flash Moe Kernel Launcher for MoE forward")
             # Inplace calc -> output_mem = input_mem
             self.launcher.launch(tokens, tokens)
 
             return tokens
         else:
-            return super().forward(hidden_states)
+           return super().forward(hidden_states)
+
+orginal_process_weights_after_loading = vllm.model_executor.layers.fused_moe.UnquantizedFusedMoEMethod.process_weights_after_loading
+
+def custom_process_weights_after_loading(self, layer: torch.nn.Module) -> None:
+    # Flash moe works now only with orginal weights layout, so no need to process weights
+    print("Processing weights after loading - no-op for FlashMoeWrapper")
 
 # Monkey patch:
 vllm.model_executor.models.qwen3_moe.Qwen3MoeSparseMoeBlock = FlashMoeWrapper
+vllm.model_executor.layers.fused_moe.UnquantizedFusedMoEMethod.process_weights_after_loading = custom_process_weights_after_loading
+# -------------------
 
 WANTED_MOE_DTYPE = "float32"
 os.environ["VLLM_USE_V1"] = "1"
@@ -395,6 +402,8 @@ def worker_func(
     }
 
     result_queue.put(result)
+    
+    print(f"Outputs from rank {global_dp_rank}, first prompt:   {outputs[0].outputs[0].token_ids}")
 
     print(f"\n==================== Rank {global_dp_rank} Results ====================")
     print(f"  LLM Init Time: {llm_init_time:.2f}s")
