@@ -403,7 +403,9 @@ def worker_func(
 
     result_queue.put(result)
     
-    print(f"Outputs from rank {global_dp_rank}, first prompt:   {outputs[0].outputs[0].token_ids}")
+    for output in outputs:
+        for i, out in enumerate(output.outputs):
+            print(f"Outputs from rank {global_dp_rank}, prompt {i}:   {out.token_ids}")
 
     print(f"\n==================== Rank {global_dp_rank} Results ====================")
     print(f"  LLM Init Time: {llm_init_time:.2f}s")
