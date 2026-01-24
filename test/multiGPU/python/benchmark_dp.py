@@ -38,10 +38,6 @@ import torch
 from multiprocessing import Queue
 import statistics
 
-# To enable MPI backend for vLLM distributed
-# import vllm.platforms as platforms
-# platforms.current_platform.dist_backend = "mpi"
-
 from vllm import LLM, EngineArgs, SamplingParams
 from vllm.platforms import current_platform
 from vllm.utils.argparse_utils import FlexibleArgumentParser
@@ -131,8 +127,8 @@ def custom_process_weights_after_loading(self, layer: torch.nn.Module) -> None:
     print("Processing weights after loading - no-op for FlashMoeWrapper")
 
 # Monkey patch:
-vllm.model_executor.models.qwen3_moe.Qwen3MoeSparseMoeBlock = FlashMoeWrapper
-vllm.model_executor.layers.fused_moe.UnquantizedFusedMoEMethod.process_weights_after_loading = custom_process_weights_after_loading
+# vllm.model_executor.models.qwen3_moe.Qwen3MoeSparseMoeBlock = FlashMoeWrapper
+# vllm.model_executor.layers.fused_moe.UnquantizedFusedMoEMethod.process_weights_after_loading = custom_process_weights_after_loading
 # -------------------
 
 WANTED_MOE_DTYPE = "float32"
@@ -214,40 +210,13 @@ def create_parser():
         skip_tokenizer_init=True,
         load_format="dummy",
         gpu_memory_utilization=0.1,
+        disable_log_stats=True,
+        # Needed for data parallel on amd ----- 
+        all2all_backend="allgather_reducescatter",
+        disable_nccl_for_dp_synchronization=True,
+        # ----------------------
         enforce_eager=True,
         dtype=WANTED_MOE_DTYPE,
-    )
-
-    # Add DP-specific args (separate from engine args to avoid conflicts)
-    parser.add_argument(
-        "--dp-num-nodes",
-        type=int,
-        default=1,
-        help="Total number of nodes for data parallel.",
-    )
-    parser.add_argument(
-        "--dp-node-rank",
-        type=int,
-        default=0,
-        help="Rank of the current node for data parallel.",
-    )
-    parser.add_argument(
-        "--dp-master-addr",
-        type=str,
-        default="",
-        help="Master node IP address for DP coordination.",
-    )
-    parser.add_argument(
-        "--dp-master-port",
-        type=int,
-        default=0,
-        help="Master node port for DP coordination.",
-    )
-    parser.add_argument(
-        "--timeout",
-        type=int,
-        default=300,
-        help="Number of seconds before unresponsive process is killed.",
     )
 
     # Benchmark-specific args
@@ -284,11 +253,7 @@ def create_parser():
 
     return parser
 
-# @rocprofsys.profile()
-def run_llm(llm, prompts, sampling_params):
-    return llm.generate(prompts, sampling_params)
-
-def worker_func(
+def benchmark_worker(
     dp_size,
     local_dp_rank,
     global_dp_rank,
@@ -352,10 +317,9 @@ def worker_func(
     print(f"[Rank {global_dp_rank}] Running {num_warmup_iters} warmup iterations...")
     for i in range(num_warmup_iters):
         warmup_start = time()
-        _ = llm.generate(prompts, sampling_params)
+        _ = llm.generate(prompts, sampling_params, use_tqdm=False)
         warmup_time = time() - warmup_start
-        print(f"[Rank {global_dp_rank}] Warmup {i + 1}/{num_warmup_iters}: {warmup_time:.4f}s")
-
+        
     # Synchronize before benchmark (barrier via sleep)
     torch.cuda.synchronize()
     sleep(0.5)
@@ -368,7 +332,7 @@ def worker_func(
     for i in range(num_benchmark_iters):
         torch.cuda.synchronize()
         iter_start = time()
-        outputs = run_llm(llm, prompts, sampling_params)
+        outputs = llm.generate(prompts, sampling_params, use_tqdm=False)
         torch.cuda.synchronize()
         iter_time = time() - iter_start
         iter_times.append(iter_time)
@@ -376,8 +340,6 @@ def worker_func(
         # Count tokens generated
         for output in outputs:
             total_tokens_generated += len(output.outputs[0].token_ids)
-
-        print(f"[Rank {global_dp_rank}] Iteration {i + 1}/{num_benchmark_iters}: {iter_time:.4f}s")
 
     # Calculate statistics for this rank
     avg_time = statistics.mean(iter_times)
@@ -399,44 +361,10 @@ def worker_func(
         "tokens_per_second": tokens_per_second,
         "prompts_per_second": prompts_per_second,
         "num_prompts": len(prompts),
+        "outputs": outputs,
     }
 
     result_queue.put(result)
-    
-    for output in outputs:
-        for i, out in enumerate(output.outputs):
-            print(f"Outputs from rank {global_dp_rank}, prompt {i}:   {out.token_ids}")
-
-    print(f"\n==================== Rank {global_dp_rank} Results ====================")
-    print(f"  LLM Init Time: {llm_init_time:.2f}s")
-    print(f"  Avg Iteration Time: {avg_time:.4f}s ± {std_time:.4f}s")
-    print(f"  Min/Max Time: {min_time:.4f}s / {max_time:.4f}s")
-    print(f"  Tokens/Second: {tokens_per_second:.2f}")
-    print(f"  Prompts/Second: {prompts_per_second:.2f}")
-
-    sleep(1)
-
-def benchmark_worker(
-    dp_size,
-    local_dp_rank,
-    global_dp_rank,
-    dp_master_ip,
-    dp_master_port,
-    engine_args,
-    benchmark_config,
-    result_queue
-):
-   worker_func(
-        dp_size,
-        local_dp_rank,
-        global_dp_rank,
-        dp_master_ip,
-        dp_master_port,
-        engine_args,
-        benchmark_config,
-        result_queue
-    )
-
 
 def print_aggregate_results(results, benchmark_config):
     """Print aggregated benchmark results from all ranks."""
@@ -468,6 +396,12 @@ def print_aggregate_results(results, benchmark_config):
         print(f"  Rank {r['rank']}: Avg={r['avg_time']:.4f}s, "
               f"Tokens/s={r['tokens_per_second']:.2f}, "
               f"Init={r['llm_init_time']:.2f}s")
+    
+    print(f"\nPer-Rank outputs:")
+    for r in sorted(results, key=lambda x: x["rank"]):
+        print(f"  Rank {r['rank']} outputs:")
+        for i, out in enumerate(r["outputs"]):
+            print(f"   Prompt {i}:   {out.outputs[0].token_ids}")
 
     print(f"\nAggregate Throughput:")
     print(f"  Total Tokens Generated (per iter): {total_tokens // benchmark_config['num_benchmark_iters']}")
@@ -482,6 +416,91 @@ def print_aggregate_results(results, benchmark_config):
 
     print("=" * 70)
 
+def RunBenchmark(model_dir):
+    parser = create_parser()
+    args = vars(parser.parse_args())
+
+    # Extract DP-specific args
+    dp_size = args.pop("data_parallel_size")
+    dp_num_nodes = 1 #< Only one node.
+    dp_node_rank = 0 #< Only one node.
+    timeout = 300
+    dp_master_ip = "127.0.0.1"
+    dp_master_port_val = get_open_port()
+
+    # Extract benchmark-specific args
+    benchmark_config = {
+        "num_warmup_iters": args.pop("num_warmup_iters"),
+        "num_benchmark_iters": args.pop("num_benchmark_iters"),
+        "total_prompts": args.pop("total_prompts"),
+        "input_length": args.pop("input_length"),
+        "output_length": args.pop("output_length"),
+    }
+    
+    # Remaining args are engine args
+    engine_args = args
+    engine_args["model"] = model_dir
+
+    assert dp_size % dp_num_nodes == 0, "dp_size should be divisible by dp_num_nodes"
+    dp_per_node = dp_size // dp_num_nodes
+
+    from multiprocessing import Process
+
+    if current_platform.is_rocm():
+        from multiprocessing import set_start_method
+        set_start_method("spawn", force=True)
+
+    # Create result queue for collecting benchmark results
+    result_queue = Queue()
+
+    print("\n" + "=" * 70)
+    print("STARTING DATA PARALLEL BENCHMARK")
+    print("=" * 70)
+    print(f"DP Size: {dp_size}, TP Size: {engine_args.get('tensor_parallel_size', 1)}")
+    print(f"Model Dir: {model_dir}")
+    print("=" * 70 + "\n")
+
+    procs = []
+    for local_dp_rank, global_dp_rank in enumerate(
+        range(dp_node_rank * dp_per_node, (dp_node_rank + 1) * dp_per_node)
+    ):
+        proc = Process(
+            target=benchmark_worker,
+            args=(
+                dp_size,
+                local_dp_rank,
+                global_dp_rank,
+                dp_master_ip,
+                dp_master_port_val,
+                engine_args,
+                benchmark_config,
+                result_queue,
+            ),
+        )
+        proc.start()
+        procs.append(proc)
+
+    exit_code = 0
+    for proc in procs:
+        proc.join(timeout=timeout)
+        if proc.exitcode is None:
+            print(f"Killing process {proc.pid} that didn't stop within {timeout}s.")
+            proc.kill()
+            exit_code = 1
+        elif proc.exitcode:
+            exit_code = proc.exitcode
+
+    # Collect results from all ranks
+    results = []
+    while not result_queue.empty():
+        results.append(result_queue.get())
+
+    if results and exit_code == 0:
+        print_aggregate_results(results, benchmark_config)
+
+    # exit(exit_code)
+    return exit_code
+
 
 if __name__ == "__main__":
     parser = create_parser()
@@ -489,11 +508,11 @@ if __name__ == "__main__":
 
     # Extract DP-specific args
     dp_size = args.pop("data_parallel_size")
-    dp_num_nodes = args.pop("dp_num_nodes")
-    dp_node_rank = args.pop("dp_node_rank")
-    dp_master_addr = args.pop("dp_master_addr")
-    dp_master_port = args.pop("dp_master_port")
-    timeout = args.pop("timeout")
+    dp_num_nodes = 1 #< Only one node.
+    dp_node_rank = 0 #< Only one node.
+    timeout = 300
+    dp_master_ip = "127.0.0.1"
+    dp_master_port_val = get_open_port()
 
     # Extract benchmark-specific args
     benchmark_config = {
@@ -518,13 +537,6 @@ if __name__ == "__main__":
     # Remaining args are engine args
     engine_args = args
     engine_args["model"] = model_dir
-
-    if dp_num_nodes == 1:
-        dp_master_ip = "127.0.0.1"
-        dp_master_port_val = get_open_port()
-    else:
-        dp_master_ip = dp_master_addr
-        dp_master_port_val = dp_master_port
 
     assert dp_size % dp_num_nodes == 0, "dp_size should be divisible by dp_num_nodes"
     dp_per_node = dp_size // dp_num_nodes
