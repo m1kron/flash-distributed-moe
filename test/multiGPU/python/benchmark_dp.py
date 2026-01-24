@@ -73,7 +73,7 @@ class FlashMoeWrapper(vllm.model_executor.models.qwen3_moe.Qwen3MoeSparseMoeBloc
         self.maxTokens = maxTokens
         
         if ep_size == 1:
-            print("FlashMoeBlockWrapper: Initializing single process")
+            print("FlashMoeWrapper: Initializing single process")
             gateWeights = self.gate.weight
             ffn1ExpertWeights = self.experts.w13_weight
             ffn2ExpertWeights = self.experts.w2_weight
@@ -82,7 +82,7 @@ class FlashMoeWrapper(vllm.model_executor.models.qwen3_moe.Qwen3MoeSparseMoeBloc
                 gateWeights, ffn1ExpertWeights, ffn2ExpertWeights, maxTokens
             )
         else:
-            print(f"FlashMoeBlockWrapper: Initializing distributed ep_size={ep_size}, ep_rank={ep_rank}")
+            print(f"FlashMoeWrapper: Initializing distributed ep_size={ep_size}, ep_rank={ep_rank}")
             # Get distributed unique id as bytes and broadcast using broadcast_object_list        
             uniqueid = self.launcher.getDistributedUniqueId(empty=True)
             if ep_rank == 0:
@@ -219,38 +219,6 @@ def create_parser():
         dtype=WANTED_MOE_DTYPE,
     )
 
-    # Benchmark-specific args
-    parser.add_argument(
-        "--num-warmup-iters",
-        type=int,
-        default=5,
-        help="Number of warmup iterations before benchmarking.",
-    )
-    parser.add_argument(
-        "--num-benchmark-iters",
-        type=int,
-        default=50,
-        help="Number of benchmark iterations.",
-    )
-    parser.add_argument(
-        "--total-prompts",
-        type=int,
-        default=4,
-        help="Total number of prompts per iteration.",
-    )
-    parser.add_argument(
-        "--input-length",
-        type=int,
-        default=16,
-        help="Input sequence length.",
-    )
-    parser.add_argument(
-        "--output-length",
-        type=int,
-        default=10,
-        help="Maximum output tokens.",
-    )
-
     return parser
 
 def benchmark_worker(
@@ -366,10 +334,10 @@ def benchmark_worker(
 
     result_queue.put(result)
 
-def print_aggregate_results(results, benchmark_config):
+def print_aggregate_results(results, benchmark_config, name):
     """Print aggregated benchmark results from all ranks."""
     print("\n" + "=" * 70)
-    print("AGGREGATE BENCHMARK RESULTS")
+    print(f"AGGREGATE BENCHMARK RESULTS for {name}:")
     print("=" * 70)
 
     print(f"\nBenchmark Configuration:")
@@ -416,7 +384,14 @@ def print_aggregate_results(results, benchmark_config):
 
     print("=" * 70)
 
-def RunBenchmark(model_dir):
+def RunBenchmark(model_dir, benchmark_config, name, enable_flash_moe):
+    
+    if(enable_flash_moe):
+        # Monkey patch:
+        vllm.model_executor.models.qwen3_moe.Qwen3MoeSparseMoeBlock = FlashMoeWrapper
+        vllm.model_executor.layers.fused_moe.UnquantizedFusedMoEMethod.process_weights_after_loading = custom_process_weights_after_loading
+    
+    
     parser = create_parser()
     args = vars(parser.parse_args())
 
@@ -428,15 +403,6 @@ def RunBenchmark(model_dir):
     dp_master_ip = "127.0.0.1"
     dp_master_port_val = get_open_port()
 
-    # Extract benchmark-specific args
-    benchmark_config = {
-        "num_warmup_iters": args.pop("num_warmup_iters"),
-        "num_benchmark_iters": args.pop("num_benchmark_iters"),
-        "total_prompts": args.pop("total_prompts"),
-        "input_length": args.pop("input_length"),
-        "output_length": args.pop("output_length"),
-    }
-    
     # Remaining args are engine args
     engine_args = args
     engine_args["model"] = model_dir
@@ -454,7 +420,7 @@ def RunBenchmark(model_dir):
     result_queue = Queue()
 
     print("\n" + "=" * 70)
-    print("STARTING DATA PARALLEL BENCHMARK")
+    print(f"STARTING DATA PARALLEL BENCHMARK: {name}")
     print("=" * 70)
     print(f"DP Size: {dp_size}, TP Size: {engine_args.get('tensor_parallel_size', 1)}")
     print(f"Model Dir: {model_dir}")
@@ -495,34 +461,10 @@ def RunBenchmark(model_dir):
     while not result_queue.empty():
         results.append(result_queue.get())
 
-    if results and exit_code == 0:
-        print_aggregate_results(results, benchmark_config)
-
-    # exit(exit_code)
-    return exit_code
+    return exit_code, results, name
 
 
 if __name__ == "__main__":
-    parser = create_parser()
-    args = vars(parser.parse_args())
-
-    # Extract DP-specific args
-    dp_size = args.pop("data_parallel_size")
-    dp_num_nodes = 1 #< Only one node.
-    dp_node_rank = 0 #< Only one node.
-    timeout = 300
-    dp_master_ip = "127.0.0.1"
-    dp_master_port_val = get_open_port()
-
-    # Extract benchmark-specific args
-    benchmark_config = {
-        "num_warmup_iters": args.pop("num_warmup_iters"),
-        "num_benchmark_iters": args.pop("num_benchmark_iters"),
-        "total_prompts": args.pop("total_prompts"),
-        "input_length": args.pop("input_length"),
-        "output_length": args.pop("output_length"),
-    }
-
     # Create model directory with config
     model_dir = tempfile.mkdtemp(prefix="qwen3_moe_benchmark_")
     create_qwen3_moe_config(
@@ -533,66 +475,37 @@ if __name__ == "__main__":
         moe_intermediate_size=768,
         num_experts_per_tok=8,
     )
+    
+    # Extract benchmark-specific args
+    benchmark_config = {
+        "num_warmup_iters": 1,
+        "num_benchmark_iters": 1,
+        "total_prompts": 4,
+        "input_length": 1,
+        "output_length": 16,
+    }
 
-    # Remaining args are engine args
-    engine_args = args
-    engine_args["model"] = model_dir
+    exit_code1, results1, name1 = RunBenchmark(model_dir, benchmark_config, "VLLM REF", True)
+    
+    exit_code2, results2, name2 = RunBenchmark(model_dir, benchmark_config, "VLLM REF2", True)
+    
+    if exit_code1 == 0:
+        print_aggregate_results(results1, benchmark_config, name1)
 
-    assert dp_size % dp_num_nodes == 0, "dp_size should be divisible by dp_num_nodes"
-    dp_per_node = dp_size // dp_num_nodes
+    if exit_code2 == 0:
+        print_aggregate_results(results2, benchmark_config, name2)
+        
+    # Compare results:
+    if exit_code1 == 0 and exit_code2 == 0:
+        print("\n" + "=" * 70)
+        print("COMPARING RESULTS BETWEEN RUNS")
+        print("=" * 70)
 
-    from multiprocessing import Process
+        for r1, r2 in zip(sorted(results1, key=lambda x: x["rank"]), sorted(results2, key=lambda x: x["rank"])):
+            outputs1 = [out.outputs[0].token_ids for out in r1["outputs"]]
+            outputs2 = [out.outputs[0].token_ids for out in r2["outputs"]]
+            assert outputs1 == outputs2, f"Outputs differ for rank {r1['rank']}"
+        
+        print("All outputs match between runs.")
 
-    if current_platform.is_rocm():
-        from multiprocessing import set_start_method
-        set_start_method("spawn", force=True)
-
-    # Create result queue for collecting benchmark results
-    result_queue = Queue()
-
-    print("\n" + "=" * 70)
-    print("STARTING DATA PARALLEL BENCHMARK")
-    print("=" * 70)
-    print(f"DP Size: {dp_size}, TP Size: {engine_args.get('tensor_parallel_size', 1)}")
-    print(f"Model Dir: {model_dir}")
-    print("=" * 70 + "\n")
-
-    procs = []
-    for local_dp_rank, global_dp_rank in enumerate(
-        range(dp_node_rank * dp_per_node, (dp_node_rank + 1) * dp_per_node)
-    ):
-        proc = Process(
-            target=benchmark_worker,
-            args=(
-                dp_size,
-                local_dp_rank,
-                global_dp_rank,
-                dp_master_ip,
-                dp_master_port_val,
-                engine_args,
-                benchmark_config,
-                result_queue,
-            ),
-        )
-        proc.start()
-        procs.append(proc)
-
-    exit_code = 0
-    for proc in procs:
-        proc.join(timeout=timeout)
-        if proc.exitcode is None:
-            print(f"Killing process {proc.pid} that didn't stop within {timeout}s.")
-            proc.kill()
-            exit_code = 1
-        elif proc.exitcode:
-            exit_code = proc.exitcode
-
-    # Collect results from all ranks
-    results = []
-    while not result_queue.empty():
-        results.append(result_queue.get())
-
-    if results and exit_code == 0:
-        print_aggregate_results(results, benchmark_config)
-
-    exit(exit_code)
+    exit(exit_code1)    
