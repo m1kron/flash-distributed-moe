@@ -19,15 +19,15 @@ The idea of the benchmark is to setup data parallel, expert parallel vllm offlin
 where the each rank processes a subset of the total prompts, and measure the throughput and latency.
 """
 
-import torch
-import rocprofsys
+# import torch
+# import rocprofsys
 
-@rocprofsys.profile()
-def warmup_omnitrace():
-    """Dummy method getting omnitrace initialized before hip runtime"""
-    torch.manual_seed(42)
+# @rocprofsys.profile()
+# def warmup_omnitrace():
+#     """Dummy method getting omnitrace initialized before hip runtime"""
+#     torch.manual_seed(42)
     
-warmup_omnitrace()
+# warmup_omnitrace()
 
 import os
 import tempfile
@@ -52,7 +52,97 @@ torch.manual_seed(SEED)
 torch.cuda.manual_seed(SEED)
 torch.cuda.manual_seed_all(SEED)  # For multi-GPU setups
 np.random.seed(SEED)
+import vllm.model_executor.models.qwen3_moe
 
+import torch.distributed as dist
+
+import flashMoeLauncher
+
+class FlashMoeWrapper(vllm.model_executor.models.qwen3_moe.Qwen3MoeSparseMoeBlock):
+
+    def __init__(
+        self,
+        vllm_config,
+        prefix: str = "",
+    ):
+        super().__init__(vllm_config, prefix)
+
+        ep_group = self.ep_group
+        ep_rank =self.ep_rank
+        ep_size =self.ep_size
+        
+        maxTokens = 8
+        
+        self.launcher = flashMoeLauncher.MoeKernelLauncher()
+        self.maxTokens = maxTokens
+        
+        if ep_size == 1:
+            print("FlashMoeBlockWrapper: Initializing single process")
+            gateWeights = self.gate.weight
+            ffn1ExpertWeights = self.experts.w13_weight
+            ffn2ExpertWeights = self.experts.w2_weight
+
+            self.launcher.create(
+                gateWeights, ffn1ExpertWeights, ffn2ExpertWeights, maxTokens
+            )
+        else:
+            print(f"FlashMoeBlockWrapper: Initializing distributed ep_size={ep_size}, ep_rank={ep_rank}")
+            # Get distributed unique id as bytes and broadcast using broadcast_object_list        
+            uniqueid = self.launcher.getDistributedUniqueId(empty=True)
+            if ep_rank == 0:
+                uniqueid = self.launcher.getDistributedUniqueId()
+                broadcast_objects = [uniqueid]
+            else:
+                broadcast_objects = [None]
+
+            dist.broadcast_object_list(broadcast_objects, 
+                                    src=dist.get_process_group_ranks(ep_group)[0], 
+                                    group=ep_group)
+            dist.barrier(ep_group)
+            
+            uniqueid = broadcast_objects[0]
+
+            self.launcher.initializeDistributed(
+                uniqueid,
+                ep_rank,
+                ep_size
+            )
+            
+    def __del__(self):
+        self.launcher.destroy()
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        num_tokens, _ = hidden_states.shape
+        if self.ep_size == 1 and num_tokens < self.maxTokens:
+            tokens = hidden_states
+
+            #print("Using Flash Moe Kernel Launcher for MoE forward")
+            # Inplace calc -> output_mem = input_mem
+            self.launcher.launch(tokens, tokens)
+
+            return tokens
+        else:
+           return super().forward(hidden_states)
+
+orginal_process_weights_after_loading = vllm.model_executor.layers.fused_moe.UnquantizedFusedMoEMethod.process_weights_after_loading
+
+def custom_process_weights_after_loading(self, layer: torch.nn.Module) -> None:
+    # Flash moe works now only with orginal weights layout, so no need to process weights
+    print("Processing weights after loading - no-op for FlashMoeWrapper")
+
+# Monkey patch:
+vllm.model_executor.models.qwen3_moe.Qwen3MoeSparseMoeBlock = FlashMoeWrapper
+vllm.model_executor.layers.fused_moe.UnquantizedFusedMoEMethod.process_weights_after_loading = custom_process_weights_after_loading
+# -------------------
+
+WANTED_MOE_DTYPE = "float32"
+os.environ["VLLM_USE_V1"] = "1"
+
+if WANTED_MOE_DTYPE == "float16":
+    os.environ["VLLM_ROCM_USE_AITER"] = "1"
+else:
+    os.environ["VLLM_ROCM_USE_AITER"] = "0"
+    
 def create_qwen3_moe_config(
     output_dir: str,
     hidden_size: int = 2048,
@@ -64,7 +154,7 @@ def create_qwen3_moe_config(
     num_experts_per_tok: int = 8,
     vocab_size: int = 32000,
     max_position_embeddings: int = 4096,
-    dtype: str = "float16",
+    dtype: str = WANTED_MOE_DTYPE,
 ) -> str:
     """Create a minimal Qwen3MoE config.json with dummy weights."""
     os.makedirs(output_dir, exist_ok=True)
@@ -100,6 +190,7 @@ def create_qwen3_moe_config(
         "use_sliding_window": False,
         "sliding_window": None,
         "torch_dtype": dtype,
+        "dtype": dtype,
         "transformers_version": "4.40.0",
         "bos_token_id": 1,
         "eos_token_id": 2,
@@ -123,6 +214,8 @@ def create_parser():
         skip_tokenizer_init=True,
         load_format="dummy",
         gpu_memory_utilization=0.1,
+        enforce_eager=True,
+        dtype=WANTED_MOE_DTYPE,
     )
 
     # Add DP-specific args (separate from engine args to avoid conflicts)
@@ -309,6 +402,10 @@ def worker_func(
     }
 
     result_queue.put(result)
+    
+    for output in outputs:
+        for i, out in enumerate(output.outputs):
+            print(f"Outputs from rank {global_dp_rank}, prompt {i}:   {out.token_ids}")
 
     print(f"\n==================== Rank {global_dp_rank} Results ====================")
     print(f"  LLM Init Time: {llm_init_time:.2f}s")

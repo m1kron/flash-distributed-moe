@@ -63,8 +63,9 @@ function(build_rocshmem)
   set_target_properties(rocshmem PROPERTIES
     IMPORTED_LOCATION ${ROCSHMEM_INSTALL_DIR}/lib/librocshmem.a
     INTERFACE_INCLUDE_DIRECTORIES ${ROCSHMEM_INSTALL_DIR}/include
-    INTERFACE_LINK_LIBRARIES "MPI::MPI_CXX;hip::device;hip::host;dl;hsa-runtime64::hsa-runtime64;-fgpu-rdc"
-    INTERFACE_COMPILE_OPTIONS "-fgpu-rdc"
+    INTERFACE_LINK_LIBRARIES "MPI::MPI_CXX;hip::device;hip::host;dl;hsa-runtime64::hsa-runtime64"
+    INTERFACE_COMPILE_OPTIONS "$<$<COMPILE_LANGUAGE:HIP>:-fgpu-rdc>"
+    INTERFACE_LINK_OPTIONS "$<$<LINK_LANGUAGE:HIP>:-fgpu-rdc;--hip-link>"
   )
   add_dependencies(rocshmem rocshmem_external)
 

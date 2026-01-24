@@ -21,9 +21,6 @@ FetchContent_Declare(
   GIT_TAG main)
 FetchContent_MakeAvailable(googletest)
 
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake")
-include(buildRocshmem)
-build_rocshmem(GIT_TAG develop)
 
 file(GLOB_RECURSE CPP_SOURCES ${PROJECT_SOURCE_DIR}/*.cpp)
 file(GLOB_RECURSE HIP_SOURCES ${PROJECT_SOURCE_DIR}/*.hip)
@@ -34,4 +31,4 @@ target_include_directories(${app_name} PRIVATE ${FLASH_MOE_LIB_INCLUDE})
 target_compile_definitions(${app_name} PRIVATE __HIP_PLATFORM_AMD__)
 
 add_dependencies(${app_name} rocshmem)
-target_link_libraries(${app_name} PRIVATE hip::host hip::device ${FLASH_MOE_LIB_NAME} gtest_main gtest rocshmem)
+target_link_libraries(${app_name} PRIVATE hip::host hip::device gtest_main gtest rocshmem)

@@ -5,6 +5,7 @@
 
 #include <stdexcept>
 #include <string>
+#include <cstring>
 
 #include "iMoeKernelLauncher.h"
 
@@ -31,6 +32,30 @@ namespace py = pybind11;
 
 class MoeKernelLauncherWrapper {
  public:
+  // Returns a 128-byte distributed unique id as Python bytes.
+  // If empty is true, returns zero-initialized id without querying ROC-SHMEM.
+  static py::bytes getDistributedUniqueId(bool empty) {
+    moe::DistributedUniqueId id;
+    if (empty) {
+      std::memset(id.data, 0, sizeof(id.data));
+    } else {
+      id = ::getDistributedUniqueId();
+    }
+    return py::bytes(reinterpret_cast<const char*>(id.data),
+                     static_cast<size_t>(sizeof(id.data)));
+  }
+
+  // Initializes distributed rocSHMEM using provided unique id, rank and world size
+  static void initializeDistributed(const py::bytes& uid, int rank,
+                                    int worldSize) {
+    std::string s = uid;  // copy bytes into std::string
+    TORCH_CHECK(s.size() == sizeof(moe::DistributedUniqueId::data),
+                "uid must be 128 bytes");
+    moe::DistributedUniqueId id;
+    std::memcpy(id.data, s.data(), s.size());
+    ::InitializeDistributed(id, rank, worldSize);
+  }
+
   void launch(const at::Tensor& tokens, const at::Tensor& output) {
     if (!ptr_) throw std::runtime_error("Launcher was destroyed");
 
@@ -98,6 +123,14 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 
   py::class_<MoeKernelLauncherWrapper>(m, "MoeKernelLauncher")
       .def(py::init())
+     .def_static("getDistributedUniqueId",
+        &MoeKernelLauncherWrapper::getDistributedUniqueId,
+        py::arg("empty") = false,
+      "Returns a 128-byte rocSHMEM unique id as bytes. If empty=True, returns zeros.")
+      .def_static("initializeDistributed",
+                  &MoeKernelLauncherWrapper::initializeDistributed,
+                  py::arg("uid"), py::arg("rank"), py::arg("world_size"),
+                  "Initialize rocSHMEM distributed context using the provided unique id")
       .def("launch", &MoeKernelLauncherWrapper::launch, py::arg("tokens"),
            py::arg("output"))
       .def("destroy", &MoeKernelLauncherWrapper::destroy)
