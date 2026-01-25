@@ -17,17 +17,12 @@ Optional benchmark parameters:
     
 The idea of the benchmark is to setup data parallel, expert parallel vllm offline inference,
 where the each rank processes a subset of the total prompts, and measure the throughput and latency.
+
+FlashMoE Patching:
+    The patching is done via flash_moe_patch module which applies patches based on
+    the FLASH_MOE_ENABLED environment variable. This ensures patches work correctly
+    with multiprocessing 'spawn' mode where vLLM creates additional subprocesses.
 """
-
-# import torch
-# import rocprofsys
-
-# @rocprofsys.profile()
-# def warmup_omnitrace():
-#     """Dummy method getting omnitrace initialized before hip runtime"""
-#     torch.manual_seed(42)
-    
-# warmup_omnitrace()
 
 import os
 import tempfile
@@ -48,88 +43,6 @@ torch.manual_seed(SEED)
 torch.cuda.manual_seed(SEED)
 torch.cuda.manual_seed_all(SEED)  # For multi-GPU setups
 np.random.seed(SEED)
-import vllm.model_executor.models.qwen3_moe
-
-import torch.distributed as dist
-
-import flashMoeLauncher
-
-class FlashMoeWrapper(vllm.model_executor.models.qwen3_moe.Qwen3MoeSparseMoeBlock):
-
-    def __init__(
-        self,
-        vllm_config,
-        prefix: str = "",
-    ):
-        super().__init__(vllm_config, prefix)
-
-        ep_group = self.ep_group
-        ep_rank =self.ep_rank
-        ep_size =self.ep_size
-        
-        maxTokens = 8
-        
-        self.launcher = flashMoeLauncher.MoeKernelLauncher()
-        self.maxTokens = maxTokens
-        
-        if ep_size == 1:
-            print("FlashMoeWrapper: Initializing single process")
-            gateWeights = self.gate.weight
-            ffn1ExpertWeights = self.experts.w13_weight
-            ffn2ExpertWeights = self.experts.w2_weight
-
-            self.launcher.create(
-                gateWeights, ffn1ExpertWeights, ffn2ExpertWeights, maxTokens
-            )
-        else:
-            print(f"FlashMoeWrapper: Initializing distributed ep_size={ep_size}, ep_rank={ep_rank}")
-            # Get distributed unique id as bytes and broadcast using broadcast_object_list        
-            uniqueid = self.launcher.getDistributedUniqueId(empty=True)
-            if ep_rank == 0:
-                uniqueid = self.launcher.getDistributedUniqueId()
-                broadcast_objects = [uniqueid]
-            else:
-                broadcast_objects = [None]
-
-            dist.broadcast_object_list(broadcast_objects, 
-                                    src=dist.get_process_group_ranks(ep_group)[0], 
-                                    group=ep_group)
-            dist.barrier(ep_group)
-            
-            uniqueid = broadcast_objects[0]
-
-            self.launcher.initializeDistributed(
-                uniqueid,
-                ep_rank,
-                ep_size
-            )
-            
-    def __del__(self):
-        self.launcher.destroy()
-
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        num_tokens, _ = hidden_states.shape
-        if self.ep_size == 1 and num_tokens < self.maxTokens:
-            tokens = hidden_states
-
-            #print("Using Flash Moe Kernel Launcher for MoE forward")
-            # Inplace calc -> output_mem = input_mem
-            self.launcher.launch(tokens, tokens)
-
-            return tokens
-        else:
-           return super().forward(hidden_states)
-
-orginal_process_weights_after_loading = vllm.model_executor.layers.fused_moe.UnquantizedFusedMoEMethod.process_weights_after_loading
-
-def custom_process_weights_after_loading(self, layer: torch.nn.Module) -> None:
-    # Flash moe works now only with orginal weights layout, so no need to process weights
-    print("Processing weights after loading - no-op for FlashMoeWrapper")
-
-# Monkey patch:
-# vllm.model_executor.models.qwen3_moe.Qwen3MoeSparseMoeBlock = FlashMoeWrapper
-# vllm.model_executor.layers.fused_moe.UnquantizedFusedMoEMethod.process_weights_after_loading = custom_process_weights_after_loading
-# -------------------
 
 WANTED_MOE_DTYPE = "float32"
 os.environ["VLLM_USE_V1"] = "1"
@@ -229,9 +142,13 @@ def benchmark_worker(
     dp_master_port,
     engine_args,
     benchmark_config,
-    result_queue
+    result_queue,
 ):
     """Worker function for each DP rank that runs the benchmark."""
+    # Note: Patching is handled automatically via sitecustomize.py which runs at
+    # Python startup in ALL processes. The PYTHONPATH with sitecustomize.py is
+    # set by enable_flash_moe_patching() before spawning.
+    
     os.environ["VLLM_DP_RANK"] = str(global_dp_rank)
     os.environ["VLLM_DP_RANK_LOCAL"] = str(local_dp_rank)
     os.environ["VLLM_DP_SIZE"] = str(dp_size)
@@ -384,13 +301,20 @@ def print_aggregate_results(results, benchmark_config, name):
 
     print("=" * 70)
 
-def RunBenchmark(model_dir, benchmark_config, name, enable_flash_moe):
+def RunBenchmark(model_dir, benchmark_config, name, enable_flash_moe=False):
+    """
+    Run the benchmark with optional FlashMoE patching.
     
-    if(enable_flash_moe):
-        # Monkey patch:
-        vllm.model_executor.models.qwen3_moe.Qwen3MoeSparseMoeBlock = FlashMoeWrapper
-        vllm.model_executor.layers.fused_moe.UnquantizedFusedMoEMethod.process_weights_after_loading = custom_process_weights_after_loading
+    The patching uses sitecustomize.py mechanism which ensures ALL processes
+    (including grandchildren spawned by vLLM) get patched at Python startup.
+    """
+    import flash_moe_patch
     
+    if enable_flash_moe:
+        # This sets up sitecustomize.py in PYTHONPATH - inherited by ALL subprocesses
+        flash_moe_patch.enable_flash_moe_patching()
+    else:
+        flash_moe_patch.disable_flash_moe_patching()
     
     parser = create_parser()
     args = vars(parser.parse_args())
@@ -463,9 +387,9 @@ def RunBenchmark(model_dir, benchmark_config, name, enable_flash_moe):
 
     return exit_code, results, name
 
-
 if __name__ == "__main__":
     # Create model directory with config
+    
     model_dir = tempfile.mkdtemp(prefix="qwen3_moe_benchmark_")
     create_qwen3_moe_config(
         output_dir=model_dir,
@@ -485,9 +409,12 @@ if __name__ == "__main__":
         "output_length": 16,
     }
 
-    exit_code1, results1, name1 = RunBenchmark(model_dir, benchmark_config, "VLLM REF", True)
-    
-    exit_code2, results2, name2 = RunBenchmark(model_dir, benchmark_config, "VLLM REF2", True)
+    # Run benchmark without FlashMoE (FLASH_MOE_ENABLED=0)
+    exit_code1, results1, name1 = RunBenchmark(model_dir, benchmark_config, "VLLM REF", enable_flash_moe=False)
+
+    # Run benchmark with FlashMoE (FLASH_MOE_ENABLED=1)
+    # The env var is set inside RunBenchmark and inherited by all subprocesses
+    exit_code2, results2, name2 = RunBenchmark(model_dir, benchmark_config, "VLLM FlashMoE", enable_flash_moe=True)
     
     if exit_code1 == 0:
         print_aggregate_results(results1, benchmark_config, name1)
