@@ -17,17 +17,12 @@ Optional benchmark parameters:
     
 The idea of the benchmark is to setup data parallel, expert parallel vllm offline inference,
 where the each rank processes a subset of the total prompts, and measure the throughput and latency.
+
+FlashMoE Patching:
+    The patching is done via flash_moe_patch module which applies patches based on
+    the FLASH_MOE_ENABLED environment variable. This ensures patches work correctly
+    with multiprocessing 'spawn' mode where vLLM creates additional subprocesses.
 """
-
-# import torch
-# import rocprofsys
-
-# @rocprofsys.profile()
-# def warmup_omnitrace():
-#     """Dummy method getting omnitrace initialized before hip runtime"""
-#     torch.manual_seed(42)
-    
-# warmup_omnitrace()
 
 import os
 import tempfile
@@ -37,10 +32,6 @@ import numpy as np
 import torch
 from multiprocessing import Queue
 import statistics
-
-# To enable MPI backend for vLLM distributed
-# import vllm.platforms as platforms
-# platforms.current_platform.dist_backend = "mpi"
 
 from vllm import LLM, EngineArgs, SamplingParams
 from vllm.platforms import current_platform
@@ -52,88 +43,6 @@ torch.manual_seed(SEED)
 torch.cuda.manual_seed(SEED)
 torch.cuda.manual_seed_all(SEED)  # For multi-GPU setups
 np.random.seed(SEED)
-import vllm.model_executor.models.qwen3_moe
-
-import torch.distributed as dist
-
-import flashMoeLauncher
-
-class FlashMoeWrapper(vllm.model_executor.models.qwen3_moe.Qwen3MoeSparseMoeBlock):
-
-    def __init__(
-        self,
-        vllm_config,
-        prefix: str = "",
-    ):
-        super().__init__(vllm_config, prefix)
-
-        ep_group = self.ep_group
-        ep_rank =self.ep_rank
-        ep_size =self.ep_size
-        
-        maxTokens = 8
-        
-        self.launcher = flashMoeLauncher.MoeKernelLauncher()
-        self.maxTokens = maxTokens
-        
-        if ep_size == 1:
-            print("FlashMoeBlockWrapper: Initializing single process")
-            gateWeights = self.gate.weight
-            ffn1ExpertWeights = self.experts.w13_weight
-            ffn2ExpertWeights = self.experts.w2_weight
-
-            self.launcher.create(
-                gateWeights, ffn1ExpertWeights, ffn2ExpertWeights, maxTokens
-            )
-        else:
-            print(f"FlashMoeBlockWrapper: Initializing distributed ep_size={ep_size}, ep_rank={ep_rank}")
-            # Get distributed unique id as bytes and broadcast using broadcast_object_list        
-            uniqueid = self.launcher.getDistributedUniqueId(empty=True)
-            if ep_rank == 0:
-                uniqueid = self.launcher.getDistributedUniqueId()
-                broadcast_objects = [uniqueid]
-            else:
-                broadcast_objects = [None]
-
-            dist.broadcast_object_list(broadcast_objects, 
-                                    src=dist.get_process_group_ranks(ep_group)[0], 
-                                    group=ep_group)
-            dist.barrier(ep_group)
-            
-            uniqueid = broadcast_objects[0]
-
-            self.launcher.initializeDistributed(
-                uniqueid,
-                ep_rank,
-                ep_size
-            )
-            
-    def __del__(self):
-        self.launcher.destroy()
-
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        num_tokens, _ = hidden_states.shape
-        if self.ep_size == 1 and num_tokens < self.maxTokens:
-            tokens = hidden_states
-
-            #print("Using Flash Moe Kernel Launcher for MoE forward")
-            # Inplace calc -> output_mem = input_mem
-            self.launcher.launch(tokens, tokens)
-
-            return tokens
-        else:
-           return super().forward(hidden_states)
-
-orginal_process_weights_after_loading = vllm.model_executor.layers.fused_moe.UnquantizedFusedMoEMethod.process_weights_after_loading
-
-def custom_process_weights_after_loading(self, layer: torch.nn.Module) -> None:
-    # Flash moe works now only with orginal weights layout, so no need to process weights
-    print("Processing weights after loading - no-op for FlashMoeWrapper")
-
-# Monkey patch:
-vllm.model_executor.models.qwen3_moe.Qwen3MoeSparseMoeBlock = FlashMoeWrapper
-vllm.model_executor.layers.fused_moe.UnquantizedFusedMoEMethod.process_weights_after_loading = custom_process_weights_after_loading
-# -------------------
 
 WANTED_MOE_DTYPE = "float32"
 os.environ["VLLM_USE_V1"] = "1"
@@ -214,81 +123,18 @@ def create_parser():
         skip_tokenizer_init=True,
         load_format="dummy",
         gpu_memory_utilization=0.1,
+        disable_log_stats=True,
+        # Needed for data parallel on amd ----- 
+        all2all_backend="allgather_reducescatter",
+        disable_nccl_for_dp_synchronization=True,
+        # ----------------------
         enforce_eager=True,
         dtype=WANTED_MOE_DTYPE,
     )
 
-    # Add DP-specific args (separate from engine args to avoid conflicts)
-    parser.add_argument(
-        "--dp-num-nodes",
-        type=int,
-        default=1,
-        help="Total number of nodes for data parallel.",
-    )
-    parser.add_argument(
-        "--dp-node-rank",
-        type=int,
-        default=0,
-        help="Rank of the current node for data parallel.",
-    )
-    parser.add_argument(
-        "--dp-master-addr",
-        type=str,
-        default="",
-        help="Master node IP address for DP coordination.",
-    )
-    parser.add_argument(
-        "--dp-master-port",
-        type=int,
-        default=0,
-        help="Master node port for DP coordination.",
-    )
-    parser.add_argument(
-        "--timeout",
-        type=int,
-        default=300,
-        help="Number of seconds before unresponsive process is killed.",
-    )
-
-    # Benchmark-specific args
-    parser.add_argument(
-        "--num-warmup-iters",
-        type=int,
-        default=5,
-        help="Number of warmup iterations before benchmarking.",
-    )
-    parser.add_argument(
-        "--num-benchmark-iters",
-        type=int,
-        default=50,
-        help="Number of benchmark iterations.",
-    )
-    parser.add_argument(
-        "--total-prompts",
-        type=int,
-        default=4,
-        help="Total number of prompts per iteration.",
-    )
-    parser.add_argument(
-        "--input-length",
-        type=int,
-        default=16,
-        help="Input sequence length.",
-    )
-    parser.add_argument(
-        "--output-length",
-        type=int,
-        default=10,
-        help="Maximum output tokens.",
-    )
-
     return parser
 
-# @rocprofsys.profile()
-def run_llm(llm, prompts, sampling_params):
-    return llm.generate(prompts, sampling_params)
-
-def worker_func(
+def benchmark_worker(
     dp_size,
     local_dp_rank,
     global_dp_rank,
@@ -296,9 +142,13 @@ def worker_func(
     dp_master_port,
     engine_args,
     benchmark_config,
-    result_queue
+    result_queue,
 ):
     """Worker function for each DP rank that runs the benchmark."""
+    # Note: Patching is handled automatically via sitecustomize.py which runs at
+    # Python startup in ALL processes. The PYTHONPATH with sitecustomize.py is
+    # set by enable_flash_moe_patching() before spawning.
+    
     os.environ["VLLM_DP_RANK"] = str(global_dp_rank)
     os.environ["VLLM_DP_RANK_LOCAL"] = str(local_dp_rank)
     os.environ["VLLM_DP_SIZE"] = str(dp_size)
@@ -352,10 +202,9 @@ def worker_func(
     print(f"[Rank {global_dp_rank}] Running {num_warmup_iters} warmup iterations...")
     for i in range(num_warmup_iters):
         warmup_start = time()
-        _ = llm.generate(prompts, sampling_params)
+        _ = llm.generate(prompts, sampling_params, use_tqdm=False)
         warmup_time = time() - warmup_start
-        print(f"[Rank {global_dp_rank}] Warmup {i + 1}/{num_warmup_iters}: {warmup_time:.4f}s")
-
+        
     # Synchronize before benchmark (barrier via sleep)
     torch.cuda.synchronize()
     sleep(0.5)
@@ -368,7 +217,7 @@ def worker_func(
     for i in range(num_benchmark_iters):
         torch.cuda.synchronize()
         iter_start = time()
-        outputs = run_llm(llm, prompts, sampling_params)
+        outputs = llm.generate(prompts, sampling_params, use_tqdm=False)
         torch.cuda.synchronize()
         iter_time = time() - iter_start
         iter_times.append(iter_time)
@@ -376,8 +225,6 @@ def worker_func(
         # Count tokens generated
         for output in outputs:
             total_tokens_generated += len(output.outputs[0].token_ids)
-
-        print(f"[Rank {global_dp_rank}] Iteration {i + 1}/{num_benchmark_iters}: {iter_time:.4f}s")
 
     # Calculate statistics for this rank
     avg_time = statistics.mean(iter_times)
@@ -399,49 +246,15 @@ def worker_func(
         "tokens_per_second": tokens_per_second,
         "prompts_per_second": prompts_per_second,
         "num_prompts": len(prompts),
+        "outputs": outputs,
     }
 
     result_queue.put(result)
-    
-    for output in outputs:
-        for i, out in enumerate(output.outputs):
-            print(f"Outputs from rank {global_dp_rank}, prompt {i}:   {out.token_ids}")
 
-    print(f"\n==================== Rank {global_dp_rank} Results ====================")
-    print(f"  LLM Init Time: {llm_init_time:.2f}s")
-    print(f"  Avg Iteration Time: {avg_time:.4f}s ± {std_time:.4f}s")
-    print(f"  Min/Max Time: {min_time:.4f}s / {max_time:.4f}s")
-    print(f"  Tokens/Second: {tokens_per_second:.2f}")
-    print(f"  Prompts/Second: {prompts_per_second:.2f}")
-
-    sleep(1)
-
-def benchmark_worker(
-    dp_size,
-    local_dp_rank,
-    global_dp_rank,
-    dp_master_ip,
-    dp_master_port,
-    engine_args,
-    benchmark_config,
-    result_queue
-):
-   worker_func(
-        dp_size,
-        local_dp_rank,
-        global_dp_rank,
-        dp_master_ip,
-        dp_master_port,
-        engine_args,
-        benchmark_config,
-        result_queue
-    )
-
-
-def print_aggregate_results(results, benchmark_config):
+def print_aggregate_results(results, benchmark_config, name):
     """Print aggregated benchmark results from all ranks."""
     print("\n" + "=" * 70)
-    print("AGGREGATE BENCHMARK RESULTS")
+    print(f"AGGREGATE BENCHMARK RESULTS for {name}:")
     print("=" * 70)
 
     print(f"\nBenchmark Configuration:")
@@ -468,6 +281,12 @@ def print_aggregate_results(results, benchmark_config):
         print(f"  Rank {r['rank']}: Avg={r['avg_time']:.4f}s, "
               f"Tokens/s={r['tokens_per_second']:.2f}, "
               f"Init={r['llm_init_time']:.2f}s")
+    
+    print(f"\nPer-Rank outputs:")
+    for r in sorted(results, key=lambda x: x["rank"]):
+        print(f"  Rank {r['rank']} outputs:")
+        for i, out in enumerate(r["outputs"]):
+            print(f"   Prompt {i}:   {out.outputs[0].token_ids}")
 
     print(f"\nAggregate Throughput:")
     print(f"  Total Tokens Generated (per iter): {total_tokens // benchmark_config['num_benchmark_iters']}")
@@ -482,49 +301,35 @@ def print_aggregate_results(results, benchmark_config):
 
     print("=" * 70)
 
-
-if __name__ == "__main__":
+def RunBenchmark(model_dir, benchmark_config, name, enable_flash_moe=False):
+    """
+    Run the benchmark with optional FlashMoE patching.
+    
+    The patching uses sitecustomize.py mechanism which ensures ALL processes
+    (including grandchildren spawned by vLLM) get patched at Python startup.
+    """
+    import flash_moe_patch
+    
+    if enable_flash_moe:
+        # This sets up sitecustomize.py in PYTHONPATH - inherited by ALL subprocesses
+        flash_moe_patch.enable_flash_moe_patching()
+    else:
+        flash_moe_patch.disable_flash_moe_patching()
+    
     parser = create_parser()
     args = vars(parser.parse_args())
 
     # Extract DP-specific args
     dp_size = args.pop("data_parallel_size")
-    dp_num_nodes = args.pop("dp_num_nodes")
-    dp_node_rank = args.pop("dp_node_rank")
-    dp_master_addr = args.pop("dp_master_addr")
-    dp_master_port = args.pop("dp_master_port")
-    timeout = args.pop("timeout")
-
-    # Extract benchmark-specific args
-    benchmark_config = {
-        "num_warmup_iters": args.pop("num_warmup_iters"),
-        "num_benchmark_iters": args.pop("num_benchmark_iters"),
-        "total_prompts": args.pop("total_prompts"),
-        "input_length": args.pop("input_length"),
-        "output_length": args.pop("output_length"),
-    }
-
-    # Create model directory with config
-    model_dir = tempfile.mkdtemp(prefix="qwen3_moe_benchmark_")
-    create_qwen3_moe_config(
-        output_dir=model_dir,
-        hidden_size=2048,
-        num_hidden_layers=1,
-        num_experts=128,
-        moe_intermediate_size=768,
-        num_experts_per_tok=8,
-    )
+    dp_num_nodes = 1 #< Only one node.
+    dp_node_rank = 0 #< Only one node.
+    timeout = 300
+    dp_master_ip = "127.0.0.1"
+    dp_master_port_val = get_open_port()
 
     # Remaining args are engine args
     engine_args = args
     engine_args["model"] = model_dir
-
-    if dp_num_nodes == 1:
-        dp_master_ip = "127.0.0.1"
-        dp_master_port_val = get_open_port()
-    else:
-        dp_master_ip = dp_master_addr
-        dp_master_port_val = dp_master_port
 
     assert dp_size % dp_num_nodes == 0, "dp_size should be divisible by dp_num_nodes"
     dp_per_node = dp_size // dp_num_nodes
@@ -539,7 +344,7 @@ if __name__ == "__main__":
     result_queue = Queue()
 
     print("\n" + "=" * 70)
-    print("STARTING DATA PARALLEL BENCHMARK")
+    print(f"STARTING DATA PARALLEL BENCHMARK: {name}")
     print("=" * 70)
     print(f"DP Size: {dp_size}, TP Size: {engine_args.get('tensor_parallel_size', 1)}")
     print(f"Model Dir: {model_dir}")
@@ -580,7 +385,51 @@ if __name__ == "__main__":
     while not result_queue.empty():
         results.append(result_queue.get())
 
-    if results and exit_code == 0:
-        print_aggregate_results(results, benchmark_config)
+    return exit_code, results, name
 
-    exit(exit_code)
+if __name__ == "__main__":
+    # Create model directory with config
+    
+    model_dir = tempfile.mkdtemp(prefix="qwen3_moe_benchmark_")
+    create_qwen3_moe_config(
+        output_dir=model_dir,
+        hidden_size=2048,
+        num_hidden_layers=1,
+        num_experts=128,
+        moe_intermediate_size=768,
+        num_experts_per_tok=8,
+    )
+    
+    # Extract benchmark-specific args
+    benchmark_config = {
+        "num_warmup_iters": 1,
+        "num_benchmark_iters": 1,
+        "total_prompts": 4,
+        "input_length": 1,
+        "output_length": 16,
+    }
+
+    # Run benchmark without FlashMoE (FLASH_MOE_ENABLED=0)
+    exit_code1, results1, name1 = RunBenchmark(model_dir, benchmark_config, "VLLM REF", enable_flash_moe=False)
+    assert exit_code1 == 0
+
+    # Run benchmark with FlashMoE (FLASH_MOE_ENABLED=1)
+    # The env var is set inside RunBenchmark and inherited by all subprocesses
+    exit_code2, results2, name2 = RunBenchmark(model_dir, benchmark_config, "VLLM FlashMoE", enable_flash_moe=True)
+    
+    assert exit_code2 == 0
+    
+    print_aggregate_results(results1, benchmark_config, name1)
+    print_aggregate_results(results2, benchmark_config, name2)
+        
+    # Compare results:
+    print("\n" + "=" * 70)
+    print("COMPARING RESULTS BETWEEN RUNS")
+    print("=" * 70)
+
+    for r1, r2 in zip(sorted(results1, key=lambda x: x["rank"]), sorted(results2, key=lambda x: x["rank"])):
+        outputs1 = [out.outputs[0].token_ids for out in r1["outputs"]]
+        outputs2 = [out.outputs[0].token_ids for out in r2["outputs"]]
+        assert outputs1 == outputs2, f"Outputs differ for rank {r1['rank']}"
+    
+    print("All outputs match between runs.")  
