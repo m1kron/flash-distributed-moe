@@ -1,1 +1,3 @@
+#! /bin/bash
+
 HIP_VISIBLE_DEVICES=4,5,6,7 PYTHONPATH=../build:$PYTHONPATH python3 test/multiGPU/python/benchmark_dp.py -dp=4

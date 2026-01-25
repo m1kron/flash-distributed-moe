@@ -411,28 +411,25 @@ if __name__ == "__main__":
 
     # Run benchmark without FlashMoE (FLASH_MOE_ENABLED=0)
     exit_code1, results1, name1 = RunBenchmark(model_dir, benchmark_config, "VLLM REF", enable_flash_moe=False)
+    assert exit_code1 == 0
 
     # Run benchmark with FlashMoE (FLASH_MOE_ENABLED=1)
     # The env var is set inside RunBenchmark and inherited by all subprocesses
     exit_code2, results2, name2 = RunBenchmark(model_dir, benchmark_config, "VLLM FlashMoE", enable_flash_moe=True)
     
-    if exit_code1 == 0:
-        print_aggregate_results(results1, benchmark_config, name1)
-
-    if exit_code2 == 0:
-        print_aggregate_results(results2, benchmark_config, name2)
+    assert exit_code2 == 0
+    
+    print_aggregate_results(results1, benchmark_config, name1)
+    print_aggregate_results(results2, benchmark_config, name2)
         
     # Compare results:
-    if exit_code1 == 0 and exit_code2 == 0:
-        print("\n" + "=" * 70)
-        print("COMPARING RESULTS BETWEEN RUNS")
-        print("=" * 70)
+    print("\n" + "=" * 70)
+    print("COMPARING RESULTS BETWEEN RUNS")
+    print("=" * 70)
 
-        for r1, r2 in zip(sorted(results1, key=lambda x: x["rank"]), sorted(results2, key=lambda x: x["rank"])):
-            outputs1 = [out.outputs[0].token_ids for out in r1["outputs"]]
-            outputs2 = [out.outputs[0].token_ids for out in r2["outputs"]]
-            assert outputs1 == outputs2, f"Outputs differ for rank {r1['rank']}"
-        
-        print("All outputs match between runs.")
-
-    exit(exit_code1)    
+    for r1, r2 in zip(sorted(results1, key=lambda x: x["rank"]), sorted(results2, key=lambda x: x["rank"])):
+        outputs1 = [out.outputs[0].token_ids for out in r1["outputs"]]
+        outputs2 = [out.outputs[0].token_ids for out in r2["outputs"]]
+        assert outputs1 != outputs2, f"Outputs differ for rank {r1['rank']}"
+    
+    print("All outputs match between runs.")  
