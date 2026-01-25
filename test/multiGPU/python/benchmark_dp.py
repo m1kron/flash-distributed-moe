@@ -430,6 +430,6 @@ if __name__ == "__main__":
     for r1, r2 in zip(sorted(results1, key=lambda x: x["rank"]), sorted(results2, key=lambda x: x["rank"])):
         outputs1 = [out.outputs[0].token_ids for out in r1["outputs"]]
         outputs2 = [out.outputs[0].token_ids for out in r2["outputs"]]
-        assert outputs1 != outputs2, f"Outputs differ for rank {r1['rank']}"
+        assert outputs1 == outputs2, f"Outputs differ for rank {r1['rank']}"
     
     print("All outputs match between runs.")  
