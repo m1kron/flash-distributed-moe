@@ -1,1 +1,1 @@
-HIP_VISIBLE_DEVICES=4,5,6,7 PYTHONPATH=../build:$PYTHONPATH python3 test/multiGPU/python/benchmark_dp.py -dp=1 --all2all-backend=allgather_reducescatter --disable-nccl-for-dp-synchronization
+HIP_VISIBLE_DEVICES=4,5,6,7 PYTHONPATH=../build:$PYTHONPATH python3 test/multiGPU/python/benchmark_dp.py -dp=4
