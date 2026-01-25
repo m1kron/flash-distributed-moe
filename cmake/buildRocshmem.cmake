@@ -21,7 +21,7 @@ function(build_rocshmem)
   set(ROCSHMEM_INSTALL_DIR ${CMAKE_BINARY_DIR}/_deps/rocshmem-install)
 
   if(NOT ROCSHMEM_BUILD_GIT_TAG)
-    set(ROCSHMEM_BUILD_GIT_TAG develop)
+    set(ROCSHMEM_BUILD_GIT_TAG rocm-7.2.0)
   endif()
 
   # Find required dependencies
