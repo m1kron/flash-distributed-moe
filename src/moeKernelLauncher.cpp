@@ -20,7 +20,6 @@ IMoeKernelLauncher::~IMoeKernelLauncher() {}
 
 }  // namespace moe
 
-
 using namespace rocshmem;
 
 __global__ void sendMsgToPeerKernel(uint64_t* data, uint64_t* message,
@@ -58,15 +57,19 @@ __global__ void sendMsgToPeerKernel(uint64_t* data, uint64_t* message,
   }
 
 ////////////////////////////////////////////////////////////////////
-extern "C" moe::DistributedUniqueId getDistributedUniqueId() {
-  rocshmem::rocshmem_uniqueid_t uid;
-  ROCSHMEM_ERROR_ASSERT(rocshmem::rocshmem_get_uniqueid(&uid));
-
-  static_assert(sizeof(rocshmem::rocshmem_uniqueid_t) ==
-                sizeof(moe::DistributedUniqueId));
-
+extern "C" moe::DistributedUniqueId getDistributedUniqueId(bool empty) {
   moe::DistributedUniqueId dist_uid;
-  memcpy(dist_uid.data, uid.data(), sizeof(dist_uid.data));
+  if (!empty) {
+    rocshmem::rocshmem_uniqueid_t uid;
+    ROCSHMEM_ERROR_ASSERT(rocshmem::rocshmem_get_uniqueid(&uid));
+
+    static_assert(sizeof(rocshmem::rocshmem_uniqueid_t) ==
+                  sizeof(moe::DistributedUniqueId));
+
+    memcpy(dist_uid.data, uid.data(), sizeof(dist_uid.data));
+  } else {
+    memset(dist_uid.data, 0, sizeof(dist_uid.data));
+  }
   return dist_uid;
 }
 
@@ -92,7 +95,6 @@ extern "C" void InitializeDistributed(const moe::DistributedUniqueId& uid,
   printf("[Rank %d/%d] Initialized rocSHMEM (rocSHMEM rank %d/%d) on GPU %d\n",
          rank, worldSize, rocshmem_rank, rocshmem_size, GPU_id);
 
-
   // ---------------------------------------------------------
   const int nelem = MAX_ELEM;
   const int npes = rocshmem::rocshmem_n_pes();
@@ -110,7 +112,8 @@ extern "C" void InitializeDistributed(const moe::DistributedUniqueId& uid,
   CHECK_HIP(hipMemcpy(message_device, message_host, nelem * sizeof(uint64_t),
                       hipMemcpyHostToDevice));
 
-  uint64_t* data = (uint64_t*)rocshmem::rocshmem_malloc(nelem * sizeof(uint64_t));
+  uint64_t* data =
+      (uint64_t*)rocshmem::rocshmem_malloc(nelem * sizeof(uint64_t));
   uint64_t* sig_addr = (uint64_t*)rocshmem::rocshmem_malloc(sizeof(uint64_t));
   if (NULL == data || NULL == message_device || NULL == sig_addr) {
     rocshmem::rocshmem_global_exit(1);
