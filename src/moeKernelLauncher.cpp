@@ -153,7 +153,9 @@ extern "C" hipError_t CreateLauncher(moe::IMoeKernelLauncher** launcher,
                                      const void* gateWeights,
                                      const void* ffn1ExpertWeights,
                                      const void* ffn2ExpertWeights,
-                                     int maxTokens, hipStream_t stream) {
+                                     int maxTokens, hipStream_t stream,
+                                     const moe::DistributedUniqueId& uid,
+                                     int rank, int worldSize) {
   moe::MoeKernelLauncher* _launcher = new moe::MoeKernelLauncher();
   HIP_ERROR_CHECK(_launcher->Init(gateWeights, ffn1ExpertWeights,
                                   ffn2ExpertWeights, maxTokens, stream));

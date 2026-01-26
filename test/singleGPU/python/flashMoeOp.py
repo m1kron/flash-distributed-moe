@@ -15,8 +15,9 @@ class FlashMoeBlockWrapper(torch.nn.Module):
         ffn1ExpertWeights = self.qwen3MoeSparseMoeBlockModule.experts.w13_weight
         ffn2ExpertWeights = self.qwen3MoeSparseMoeBlockModule.experts.w2_weight
 
+        uniqueid = self.launcher.getDistributedUniqueId(empty=True)
         self.launcher.create(
-            gateWeights, ffn1ExpertWeights, ffn2ExpertWeights, maxTokens
+            gateWeights, ffn1ExpertWeights, ffn2ExpertWeights, maxTokens, uniqueid, 0, 1
         )
         self.maxTokens = maxTokens
 
