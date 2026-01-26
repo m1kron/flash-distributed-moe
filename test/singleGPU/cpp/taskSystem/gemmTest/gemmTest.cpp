@@ -3,7 +3,7 @@
 #include "staticGemmKernel.h"
 #include "taskSystemGemmKernel.h"
 #include "test/singleGPU/cpp/moe/reference/refGemm.h"
-#include "test/singleGPU/cpp/utils/utils.h"
+#include "test/common/utils.h"
 
 namespace {
 

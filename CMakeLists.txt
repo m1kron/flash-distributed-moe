@@ -42,4 +42,5 @@ set(FLASH_MOE_LIB_INCLUDE ${PROJECT_SOURCE_DIR})
 # Build unittests:
 add_subdirectory(test/singleGPU/cpp/)
 
-add_subdirectory(test/multiGPU/cpp/)
+add_subdirectory(test/multiGPU/cpp/rocshmem)
+add_subdirectory(test/multiGPU/cpp/moe)

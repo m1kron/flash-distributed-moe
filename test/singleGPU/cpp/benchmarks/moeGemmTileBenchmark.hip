@@ -5,7 +5,7 @@
 #include "src/hip/kernel/tasks/internal/writeGemmTileBlock.h"
 #include "test/singleGPU/cpp/benchmarks/benchmarkUtils.h"
 #include "test/singleGPU/cpp/moe/reference/refGemm.h"
-#include "test/singleGPU/cpp/utils/utils.h"
+#include "test/common/utils.h"
 
 namespace {
 static constexpr float ABS_ERROR = 1e-3f;

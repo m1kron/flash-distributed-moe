@@ -1,5 +1,5 @@
 #include "include/iMoeKernelLauncher.h"
-#include "test/singleGPU/cpp/utils/utils.h"
+#include "test/common/utils.h"
 namespace {
 
 TEST(MoeApiTests, maxHandledTokens) {

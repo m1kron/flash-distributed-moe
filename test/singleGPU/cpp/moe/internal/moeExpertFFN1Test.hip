@@ -6,7 +6,7 @@
 #include "src/hip/kernel/tasks/internal/writeGemmTileBlock.h"
 #include "src/hip/utils/hipDeviceUtils.h"
 #include "test/singleGPU/cpp/moe/reference/refExpertFFN1.h"
-#include "test/singleGPU/cpp/utils/utils.h"
+#include "test/common/utils.h"
 
 namespace {
 constexpr int TOKENS_NUM = 48;
