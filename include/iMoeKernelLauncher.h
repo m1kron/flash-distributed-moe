@@ -23,7 +23,7 @@ struct DistributedUniqueId {
 }  // namespace moe
 
 // Gets the distributed unique id. If empty is true, returns an empty unique id.
-extern "C" moe::DistributedUniqueId getDistributedUniqueId(bool empty);
+extern "C" moe::DistributedUniqueId GetDistributedUniqueId(bool empty);
 
 // Creates launcher.
 extern "C" hipError_t CreateLauncher(moe::IMoeKernelLauncher** launcher,

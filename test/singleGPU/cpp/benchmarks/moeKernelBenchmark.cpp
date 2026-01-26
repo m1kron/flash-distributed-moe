@@ -47,7 +47,7 @@ void PerformBenchmark(int numTokens) {
                              EXPERTS_FNN1_WEIGHTS_SIZE * sizeof(float)));
   HIP_ERROR_ASSERT(hipMalloc(&expertFFN2Weights_device,
                              EXPERTS_FNN2_WEIGHTS_SIZE * sizeof(float)));
-  const moe::DistributedUniqueId duid = getDistributedUniqueId(/*empty=*/true);
+  const moe::DistributedUniqueId duid = GetDistributedUniqueId(/*empty=*/true);
   moe::IMoeKernelLauncher* launcher = nullptr;
   HIP_ERROR_ASSERT(
       CreateLauncher(&launcher, gateWeights_device, expertFFN1Weights_device,

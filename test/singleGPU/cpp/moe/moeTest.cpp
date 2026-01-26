@@ -79,7 +79,7 @@ TEST(MoeTests, basic) {
       EXPERTS_FNN2_WEIGHTS_SIZE * sizeof(float), hipMemcpyHostToDevice));
 
   const moe::DistributedUniqueId duid =
-      getDistributedUniqueId(/*empty=*/true);
+      GetDistributedUniqueId(/*empty=*/true);
   moe::IMoeKernelLauncher* launcher = nullptr;
   HIP_ERROR_ASSERT(
       CreateLauncher(&launcher, gateWeights_device, expertFFN1Weights_device,

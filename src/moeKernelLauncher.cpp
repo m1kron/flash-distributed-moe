@@ -11,7 +11,7 @@ IMoeKernelLauncher::~IMoeKernelLauncher() {}
 }  // namespace moe
 
 ////////////////////////////////////////////////////////////////////
-extern "C" moe::DistributedUniqueId getDistributedUniqueId(bool empty) {
+extern "C" moe::DistributedUniqueId GetDistributedUniqueId(bool empty) {
   moe::DistributedUniqueId dist_uid;
   if (!empty) {
     rocshmem::rocshmem_uniqueid_t uid;

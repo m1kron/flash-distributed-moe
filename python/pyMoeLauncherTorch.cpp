@@ -36,7 +36,7 @@ class MoeKernelLauncherWrapper {
   // If empty is true, returns zero-initialized id without querying ROC-SHMEM.
   static py::bytes getDistributedUniqueId(bool empty) {
     moe::DistributedUniqueId id;
-    id = ::getDistributedUniqueId(empty);
+    id = ::GetDistributedUniqueId(empty);
     return py::bytes(reinterpret_cast<const char*>(id.data),
                      static_cast<size_t>(sizeof(id.data)));
   }
