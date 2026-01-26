@@ -1,27 +1,60 @@
+#include "src/hip/common/metadata.h"
+#include "test/common/moeTools.h"
 #include "test/multiGPU/cpp/moe/moeDistBaseTest.h"
+#include "test/singleGPU/cpp/moe/reference/refFullMoe.h"
 
-TEST_F(MoeDistBaseTest, Bla) {
+namespace {
+constexpr float ERROR_ABS = 1e-5f;
+constexpr int TOKENS_NUM = 1;
+constexpr int EXPERTS_NUM =
+    moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::EXPERTS_NUM;
+constexpr int HIDDEN_SIZE =
+    moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::HIDDEN_SIZE;
+constexpr int EXPERT_INTERMEDIATE_SIZE =
+    moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::EXPERT_INTERMEDIATE_SIZE;
+constexpr int TOPK = moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::TOPK;
 
-  std::vector<int> data{ 1, 2, 3, 4 };
+TEST_F(MoeDistBaseTest, BaseTest) {
+  const test::MoeInputCPU inputCPU = test::GenerateMoeInputCPU(TOKENS_NUM);
 
-  ExecuteInSeparateProcesses(
-      4, [&data](const moe::DistributedUniqueId& duid, int rank, int size) {
-        moe::IMoeKernelLauncher* launcher = nullptr;
-        HIP_ERROR_ASSERT(CreateLauncher(&launcher, nullptr, nullptr, nullptr, 1,
-                                        nullptr, duid, rank, size));
+  auto refOut = test::refFullMoe(
+      inputCPU.tokens_host.data(), inputCPU.gateWeights_host.data(),
+      inputCPU.expertFFN1Weights_host.data(),
+      inputCPU.expertFFN2Weights_host.data(), TOKENS_NUM, EXPERTS_NUM,
+      HIDDEN_SIZE, TOPK, EXPERT_INTERMEDIATE_SIZE);
 
-        int GPU_id;
-        HIP_ERROR_ASSERT(hipGetDevice(&GPU_id));
-        ASSERT_EQ(GPU_id, rank);
+  ExecuteInSeparateProcesses(1, [&inputCPU, &refOut](
+                                    const moe::DistributedUniqueId& duid,
+                                    int rank, int worldSize) {
+    test::MoeInputGPU gpuAlloc;
+    test::AllocateInputGPU(inputCPU, gpuAlloc, rank, worldSize);
 
-        std::cout << "Rank " << rank << " successfully created launcher."
-                  << std::endl;
+    hipStream_t stream = 0;
+    moe::IMoeKernelLauncher* launcher = nullptr;
+    HIP_ERROR_ASSERT(CreateLauncher(
+        &launcher, gpuAlloc.gateWeights_device,
+        gpuAlloc.expertFFN1Weights_device, gpuAlloc.expertFFN2Weights_device,
+        TOKENS_NUM + 2, stream, duid, rank, worldSize));
 
-        for (const auto& data_item : data) {
-          std::cout << "Rank " << rank << " data item: " << data_item
-                    << std::endl;
-        }
+    HIP_ERROR_ASSERT(launcher->Launch(gpuAlloc.tokens_device,
+                                      gpuAlloc.finalOutput_device, TOKENS_NUM,
+                                      stream));
 
-        HIP_ERROR_ASSERT(DestroyLauncher(launcher, nullptr));
-      });
+    HIP_ERROR_ASSERT(hipDeviceSynchronize())
+    HIP_ERROR_ASSERT(hipGetLastError());
+
+    std::vector<float> output_host(refOut.size(), 0);
+
+    HIP_ERROR_ASSERT(hipMemcpy(output_host.data(), gpuAlloc.finalOutput_device,
+                               output_host.size() * sizeof(float),
+                               hipMemcpyDeviceToHost));
+
+    // Free device memory.
+    FreeInputGPU(gpuAlloc);
+
+    HIP_ERROR_ASSERT(DestroyLauncher(launcher, stream));
+
+    CheckAgainstRefBuffer(output_host, refOut, ERROR_ABS);
+  });
 }
+}  // namespace
