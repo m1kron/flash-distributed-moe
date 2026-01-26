@@ -20,11 +20,15 @@ struct MoeInputGPU {
   const float* expertFFN1Weights_device = nullptr;
   const float* expertFFN2Weights_device = nullptr;
   float* finalOutput_device = nullptr;
+  int tokensNum = 0;
 };
 
 void AllocateInputGPU(const MoeInputCPU& cpuInput, MoeInputGPU& gpuInput,
                       int rank, int worldSize);
 void FreeInputGPU(MoeInputGPU& gpuInput);
+
+std::vector<float> ShardRefOutput(const std::vector<float>& refOut, int rank,
+                                  int worldSize);
 
 ////////////////////////////////////////////////////////////////////////
 //
@@ -71,9 +75,12 @@ inline void AllocateInputGPU(const MoeInputCPU& cpuInput, MoeInputGPU& gpuInput,
 
   const int tokensNum = cpuInput.tokens_host.size() / HIDDEN_SIZE;
 
-  // Calculate local (sharded) sizes
-  const int localTokensNum = tokensNum / worldSize;
-  const int tokenOffset = rank * localTokensNum;
+  // Calculate local (sharded) token sizes with remainder distribution
+  const int baseTokenCount = tokensNum / worldSize;
+  const int tokenRemainder = tokensNum % worldSize;
+  const int localTokensNum = baseTokenCount + (rank < tokenRemainder ? 1 : 0);
+  const int tokenOffset =
+      rank * baseTokenCount + std::min(rank, tokenRemainder);
 
   const int localExpertsNum = EXPERTS_NUM / worldSize;
   const int expertOffset = rank * localExpertsNum;
@@ -133,6 +140,7 @@ inline void AllocateInputGPU(const MoeInputCPU& cpuInput, MoeInputGPU& gpuInput,
   gpuInput.expertFFN1Weights_device = expertFFN1Weights_device;
   gpuInput.expertFFN2Weights_device = expertFFN2Weights_device;
   gpuInput.finalOutput_device = finalOutput_device;
+  gpuInput.tokensNum = localTokensNum;
 }
 
 ////////////////////////////////////////////////////////////////////////
@@ -146,4 +154,27 @@ inline void FreeInputGPU(MoeInputGPU& gpuInput) {
   HIP_ERROR_ASSERT(hipFree(const_cast<float*>(gpuInput.finalOutput_device)));
 }
 
+////////////////////////////////////////////////////////////////////////
+inline std::vector<float> ShardRefOutput(const std::vector<float>& refOut,
+                                         int rank, int worldSize) {
+  constexpr int HIDDEN_SIZE =
+      moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::HIDDEN_SIZE;
+
+  const int tokensNum = refOut.size() / HIDDEN_SIZE;
+  const int baseCount = tokensNum / worldSize;
+  const int remainder = tokensNum % worldSize;
+
+  // Distribute remainder tokens to first 'remainder' ranks
+  const int localTokensNum = baseCount + (rank < remainder ? 1 : 0);
+  const int tokenOffset = rank * baseCount + std::min(rank, remainder);
+
+  const size_t localOutputSize = localTokensNum * HIDDEN_SIZE;
+
+  std::vector<float> shardedOutput(localOutputSize);
+  std::copy(refOut.begin() + tokenOffset * HIDDEN_SIZE,
+            refOut.begin() + (tokenOffset + localTokensNum) * HIDDEN_SIZE,
+            shardedOutput.begin());
+
+  return shardedOutput;
+}
 }  // namespace test

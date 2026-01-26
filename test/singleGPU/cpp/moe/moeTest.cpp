@@ -43,8 +43,9 @@ TEST(MoeTests, basic) {
       &launcher, gpuAlloc.gateWeights_device, gpuAlloc.expertFFN1Weights_device,
       gpuAlloc.expertFFN2Weights_device, TOKENS_NUM + 2, stream, duid, 0, 1));
 
-  HIP_ERROR_ASSERT(launcher->Launch(
-      gpuAlloc.tokens_device, gpuAlloc.finalOutput_device, TOKENS_NUM, stream));
+  HIP_ERROR_ASSERT(launcher->Launch(gpuAlloc.tokens_device,
+                                    gpuAlloc.finalOutput_device,
+                                    gpuAlloc.tokensNum, stream));
 
   HIP_ERROR_ASSERT(hipDeviceSynchronize())
   HIP_ERROR_ASSERT(hipGetLastError());
