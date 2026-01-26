@@ -2,7 +2,7 @@
 #include <rocshmem/rocshmem.hpp>
 
 #include "gtest/gtest.h"
-#include "test/singleGPU/cpp/utils/utils.h"
+#include "test/common/utils.h"
 
 using namespace rocshmem;
 

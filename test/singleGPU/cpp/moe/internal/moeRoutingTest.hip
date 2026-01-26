@@ -8,7 +8,7 @@
 #include "src/hip/taskSystem/workerLoop.h"
 #include "src/hip/utils/hipDeviceUtils.h"
 #include "test/singleGPU/cpp/moe/reference/refMoeGate.h"
-#include "test/singleGPU/cpp/utils/utils.h"
+#include "test/common/utils.h"
 
 namespace {
 constexpr int TOKENS_NUM = 48;

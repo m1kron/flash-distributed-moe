@@ -1,7 +1,7 @@
 #pragma once
 #include "gtest/gtest.h"
 #include "include/iMoeKernelLauncher.h"
-#include "test/singleGPU/cpp/utils/utils.h"
+#include "test/common/utils.h"
 
 // Base gtest fixture for rocshmem fork based tests.
 class MoeDistBaseTest : public ::testing::Test {

@@ -10,7 +10,7 @@
 #include "src/hip/utils/hipDeviceUtils.h"
 #include "test/singleGPU/cpp/moe/reference/refExpertFFN1.h"
 #include "test/singleGPU/cpp/moe/reference/refMoeGate.h"
-#include "test/singleGPU/cpp/utils/utils.h"
+#include "test/common/utils.h"
 
 namespace {
 constexpr float ERROR_ABS = 2e-5f;
