@@ -33,7 +33,7 @@ TEST(MoeTests, basic) {
   std::vector<float> output_host(FINAL_OUTPUT_SIZE, 0.0f);
 
   test::MoeInputGPU gpuAlloc;
-  test::AllocateInputGPU(input, gpuAlloc);
+  test::AllocateInputGPU(input, gpuAlloc, 0, 1);
 
   hipStream_t stream = 0;
 
