@@ -61,7 +61,8 @@ extern "C" moe::DistributedUniqueId getDistributedUniqueId(bool empty) {
   moe::DistributedUniqueId dist_uid;
   if (!empty) {
     rocshmem::rocshmem_uniqueid_t uid;
-    ROCSHMEM_ERROR_ASSERT(rocshmem::rocshmem_get_uniqueid(&uid));
+    if (rocshmem::rocshmem_get_uniqueid(&uid) != 0)
+      MOE_ERROR_LOG("rocshmem_get_uniqueid failed");
 
     static_assert(sizeof(rocshmem::rocshmem_uniqueid_t) ==
                   sizeof(moe::DistributedUniqueId));
@@ -158,8 +159,62 @@ extern "C" hipError_t CreateLauncher(moe::IMoeKernelLauncher** launcher,
                                      int rank, int worldSize) {
   moe::MoeKernelLauncher* _launcher = new moe::MoeKernelLauncher();
   HIP_ERROR_CHECK(_launcher->Init(gateWeights, ffn1ExpertWeights,
-                                  ffn2ExpertWeights, maxTokens, stream));
+                                  ffn2ExpertWeights, maxTokens, stream, uid,
+                                  rank, worldSize));
   *launcher = _launcher;
+
+  if (worldSize > 1) {
+    // ---------------------------------------------------------
+    const int nelem = MAX_ELEM;
+    const int npes = rocshmem::rocshmem_n_pes();
+    const int dst_pe = (rank + 1) % npes;
+    const int prev_pe = (rank - 1 + npes) % npes;
+    uint64_t* message_host = (uint64_t*)malloc(nelem * sizeof(uint64_t));
+    constexpr int msgVal = 12345;
+
+    for (int i = 0; i < nelem; i++) {
+      message_host[i] = msgVal;
+    }
+
+    uint64_t* message_device;
+    CHECK_HIP(hipMalloc(&message_device, nelem * sizeof(uint64_t)));
+    CHECK_HIP(hipMemcpy(message_device, message_host, nelem * sizeof(uint64_t),
+                        hipMemcpyHostToDevice));
+
+    uint64_t* data =
+        (uint64_t*)rocshmem::rocshmem_malloc(nelem * sizeof(uint64_t));
+    uint64_t* sig_addr = (uint64_t*)rocshmem::rocshmem_malloc(sizeof(uint64_t));
+    if (NULL == data || NULL == message_device || NULL == sig_addr) {
+      rocshmem::rocshmem_global_exit(1);
+    }
+
+    CHECK_HIP(hipMemset(data, 0, (nelem * sizeof(uint64_t))));
+    CHECK_HIP(hipMemset(sig_addr, 0, (sizeof(uint64_t))));
+    CHECK_HIP(hipDeviceSynchronize());
+
+    int threadsPerBlock = MAX_ELEM;
+    sendMsgToPeerKernel<<<dim3(1), dim3(threadsPerBlock), 0, 0>>>(
+        data, message_device, nelem, sig_addr, rank, dst_pe);
+    rocshmem::rocshmem_barrier_all();
+    CHECK_HIP(hipDeviceSynchronize());
+
+    bool pass = true;
+    const int expected = rank == 0 ? msgVal + npes - 1 : msgVal + rank;
+    for (int i = 0; i < nelem; i++) {
+      if (data[i] != expected) {
+        pass = false;
+        printf("[%d] Error in element %d expected %d got %lu\n", rank, i,
+               expected, data[i]);
+      }
+    }
+    printf("[%d] Test %s \t %s\n", rank, "vllm", pass ? "[PASS]" : "[FAIL]");
+
+    free(message_host);
+    CHECK_HIP(hipFree(message_device));
+    rocshmem::rocshmem_free(data);
+    // ---------------------------------------------------------
+  }
+
   return hipSuccess;
 }
 

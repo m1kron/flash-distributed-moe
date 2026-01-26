@@ -1,5 +1,6 @@
 #pragma once
 #include "include/iMoeKernelLauncher.h"
+#include "src/hip/utils/rocshmem.h"
 
 namespace moe {
 
@@ -15,7 +16,8 @@ class MoeKernelLauncher : public IMoeKernelLauncher {
   // Initializes launcher.
   hipError_t Init(const void* gateWeights, const void* ffn1ExpertWeights,
                   const void* ffn2ExpertWeights, int maxTokens,
-                  hipStream_t stream);
+                  hipStream_t stream, const moe::DistributedUniqueId& uid,
+                  int rank, int worldSize);
 
   // Deinitializes launcher.
   hipError_t Deinit(hipStream_t stream);
