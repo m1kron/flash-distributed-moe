@@ -1,9 +1,7 @@
-#include <hip/hip_runtime.h>
-
 #include "include/iMoeKernelLauncher.h"
 #include "src/hip/common/metadata.h"
+#include "test/common/moeTools.h"
 #include "test/singleGPU/cpp/moe/reference/refFullMoe.h"
-#include "test/common/utils.h"
 
 namespace {
 constexpr float ERROR_ABS = 1e-5f;
@@ -28,86 +26,42 @@ static void printResult(const float* result) {
 }
 
 TEST(MoeTests, basic) {
-  constexpr int TOKENS_SIZE = TOKENS_NUM * HIDDEN_SIZE;
-  constexpr int GATE_WEIGHTS_SIZE = HIDDEN_SIZE * EXPERTS_NUM;
-  constexpr int EXPERTS_FNN1_WEIGHTS_SIZE =
-      EXPERTS_NUM * HIDDEN_SIZE * EXPERT_INTERMEDIATE_SIZE * 2;
-  constexpr int EXPERTS_FNN2_WEIGHTS_SIZE =
-      EXPERTS_NUM * HIDDEN_SIZE * EXPERT_INTERMEDIATE_SIZE;
   constexpr int FINAL_OUTPUT_SIZE = TOKENS_NUM * HIDDEN_SIZE;
 
-  std::vector<float> tokens_host =
-      RandomVector<float>(TOKENS_SIZE, -1.0f, 1.0f);
-  std::vector<float> gateWeights_host =
-      RandomVector<float>(GATE_WEIGHTS_SIZE, -0.1f, 0.1f);
-  std::vector<float> expertFFN1Weights_host =
-      RandomVector<float>(EXPERTS_FNN1_WEIGHTS_SIZE, -0.1f, 0.1f);
-  std::vector<float> expertFFN2Weights_host =
-      RandomVector<float>(EXPERTS_FNN2_WEIGHTS_SIZE, -0.1f, 0.1f);
+  const test::MoeInputCPU input = test::GenerateMoeInputCPU(TOKENS_NUM);
 
   std::vector<float> output_host(FINAL_OUTPUT_SIZE, 0.0f);
 
-  float* tokens_device = nullptr;
-  float* gateWeights_device = nullptr;
-  float* expertFFN1Weights_device = nullptr;
-  float* expertFFN2Weights_device = nullptr;
-  float* finalOutput_device = nullptr;
+  test::MoeInputGPU gpuAlloc;
+  test::AllocateInputGPU(input, gpuAlloc);
 
   hipStream_t stream = 0;
 
-  HIP_ERROR_ASSERT(hipMalloc(&tokens_device, TOKENS_SIZE * sizeof(float)));
-  HIP_ERROR_ASSERT(
-      hipMalloc(&gateWeights_device, GATE_WEIGHTS_SIZE * sizeof(float)));
-  HIP_ERROR_ASSERT(hipMalloc(&expertFFN1Weights_device,
-                             EXPERTS_FNN1_WEIGHTS_SIZE * sizeof(float)));
-  HIP_ERROR_ASSERT(hipMalloc(&expertFFN2Weights_device,
-                             EXPERTS_FNN2_WEIGHTS_SIZE * sizeof(float)));
-  HIP_ERROR_ASSERT(
-      hipMalloc(&finalOutput_device, FINAL_OUTPUT_SIZE * sizeof(float)));
-
-  HIP_ERROR_ASSERT(hipMemcpy(tokens_device, tokens_host.data(),
-                             TOKENS_SIZE * sizeof(float),
-                             hipMemcpyHostToDevice));
-  HIP_ERROR_ASSERT(hipMemcpy(gateWeights_device, gateWeights_host.data(),
-                             GATE_WEIGHTS_SIZE * sizeof(float),
-                             hipMemcpyHostToDevice));
-  HIP_ERROR_ASSERT(hipMemcpy(
-      expertFFN1Weights_device, expertFFN1Weights_host.data(),
-      EXPERTS_FNN1_WEIGHTS_SIZE * sizeof(float), hipMemcpyHostToDevice));
-  HIP_ERROR_ASSERT(hipMemcpy(
-      expertFFN2Weights_device, expertFFN2Weights_host.data(),
-      EXPERTS_FNN2_WEIGHTS_SIZE * sizeof(float), hipMemcpyHostToDevice));
-
-  const moe::DistributedUniqueId duid =
-      GetDistributedUniqueId(/*empty=*/true);
+  const moe::DistributedUniqueId duid = GetDistributedUniqueId(/*empty=*/true);
   moe::IMoeKernelLauncher* launcher = nullptr;
-  HIP_ERROR_ASSERT(
-      CreateLauncher(&launcher, gateWeights_device, expertFFN1Weights_device,
-                     expertFFN2Weights_device, TOKENS_NUM + 2, stream, duid, 0, 1));
+  HIP_ERROR_ASSERT(CreateLauncher(
+      &launcher, gpuAlloc.gateWeights_device, gpuAlloc.expertFFN1Weights_device,
+      gpuAlloc.expertFFN2Weights_device, TOKENS_NUM + 2, stream, duid, 0, 1));
 
-  HIP_ERROR_ASSERT(
-      launcher->Launch(tokens_device, finalOutput_device, TOKENS_NUM, stream));
+  HIP_ERROR_ASSERT(launcher->Launch(
+      gpuAlloc.tokens_device, gpuAlloc.finalOutput_device, TOKENS_NUM, stream));
 
   HIP_ERROR_ASSERT(hipDeviceSynchronize())
   HIP_ERROR_ASSERT(hipGetLastError());
 
-  HIP_ERROR_ASSERT(hipMemcpy(output_host.data(), finalOutput_device,
+  HIP_ERROR_ASSERT(hipMemcpy(output_host.data(), gpuAlloc.finalOutput_device,
                              FINAL_OUTPUT_SIZE * sizeof(float),
                              hipMemcpyDeviceToHost));
 
   // Free device memory.
-  HIP_ERROR_ASSERT(hipFree(tokens_device));
-  HIP_ERROR_ASSERT(hipFree(gateWeights_device));
-  HIP_ERROR_ASSERT(hipFree(expertFFN1Weights_device));
-  HIP_ERROR_ASSERT(hipFree(expertFFN2Weights_device));
-  HIP_ERROR_ASSERT(hipFree(finalOutput_device));
+  FreeInputGPU(gpuAlloc);
 
   HIP_ERROR_ASSERT(DestroyLauncher(launcher, stream));
 
   auto refOut = test::refFullMoe(
-      tokens_host.data(), gateWeights_host.data(),
-      expertFFN1Weights_host.data(), expertFFN2Weights_host.data(), TOKENS_NUM,
-      EXPERTS_NUM, HIDDEN_SIZE, TOPK, EXPERT_INTERMEDIATE_SIZE);
+      input.tokens_host.data(), input.gateWeights_host.data(),
+      input.expertFFN1Weights_host.data(), input.expertFFN2Weights_host.data(),
+      TOKENS_NUM, EXPERTS_NUM, HIDDEN_SIZE, TOPK, EXPERT_INTERMEDIATE_SIZE);
 
   // printResult(refOut.data());
 
