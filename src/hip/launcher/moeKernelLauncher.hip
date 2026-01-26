@@ -98,13 +98,13 @@ hipError_t InitRocshmem(const moe::DistributedUniqueId& uid, int rank,
 
   rocshmem::rocshmem_init_attr_t attr;
 
-  if (!rocshmem::rocshmem_set_attr_uniqueid_args(rank, worldSize, &roc_uid,
-                                                 &attr)) {
+  if (rocshmem::rocshmem_set_attr_uniqueid_args(rank, worldSize, &roc_uid,
+                                                &attr) != 0) {
     MOE_ERROR_LOG("rocshmem_set_attr_uniqueid_args failed");
     return hipErrorUnknown;
   }
-  if (!rocshmem::rocshmem_init_attr(rocshmem::ROCSHMEM_INIT_WITH_UNIQUEID,
-                                    &attr)) {
+  if (rocshmem::rocshmem_init_attr(rocshmem::ROCSHMEM_INIT_WITH_UNIQUEID,
+                                   &attr) != 0) {
     MOE_ERROR_LOG("rocshmem_init_attr failed");
     return hipErrorUnknown;
   }
@@ -134,6 +134,8 @@ hipError_t MoeKernelLauncher::Init(const void* gateWeights,
                                    const moe::DistributedUniqueId& uid,
                                    int rank, int worldSize) {
   m_internalState = new InternalState();
+
+  MOE_ASSERT(worldSize > 0);
 
   if (worldSize > 1) {
     HIP_ERROR_CHECK(InitRocshmem(uid, rank, worldSize));

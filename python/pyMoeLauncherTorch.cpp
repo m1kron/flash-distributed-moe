@@ -41,18 +41,6 @@ class MoeKernelLauncherWrapper {
                      static_cast<size_t>(sizeof(id.data)));
   }
 
-  // Initializes distributed rocSHMEM using provided unique id, rank and world
-  // size
-  static void initializeDistributed(const py::bytes& uid, int rank,
-                                    int worldSize) {
-    std::string s = uid;  // copy bytes into std::string
-    TORCH_CHECK(s.size() == sizeof(moe::DistributedUniqueId::data),
-                "uid must be 128 bytes");
-    moe::DistributedUniqueId id;
-    std::memcpy(id.data, s.data(), s.size());
-    ::InitializeDistributed(id, rank, worldSize);
-  }
-
   void launch(const at::Tensor& tokens, const at::Tensor& output) {
     if (!ptr_) throw std::runtime_error("Launcher was destroyed");
 
@@ -88,11 +76,13 @@ class MoeKernelLauncherWrapper {
     auto hiddenSize = gate_weights.sizes()[1];
     auto interSize = ffn2_expert_weights.sizes()[2];
 
-    TORCH_CHECK(ffn1_expert_weights.sizes()[0] == expertsSize);
+    TORCH_CHECK(worldSize > 0);
+
+    TORCH_CHECK(ffn1_expert_weights.sizes()[0] == expertsSize / worldSize);
     TORCH_CHECK(ffn1_expert_weights.sizes()[1] == 2 * interSize);
     TORCH_CHECK(ffn1_expert_weights.sizes()[2] == hiddenSize);
 
-    TORCH_CHECK(ffn2_expert_weights.sizes()[0] == expertsSize);
+    TORCH_CHECK(ffn2_expert_weights.sizes()[0] == expertsSize / worldSize);
     TORCH_CHECK(ffn2_expert_weights.sizes()[1] == hiddenSize);
     TORCH_CHECK(ffn2_expert_weights.sizes()[2] == interSize);
 
@@ -132,11 +122,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
                   py::arg("empty") = false,
                   "Returns a 128-byte rocSHMEM unique id as bytes. If "
                   "empty=True, returns zeros.")
-      .def_static("initializeDistributed",
-                  &MoeKernelLauncherWrapper::initializeDistributed,
-                  py::arg("uid"), py::arg("rank"), py::arg("world_size"),
-                  "Initialize rocSHMEM distributed context using the provided "
-                  "unique id")
       .def("launch", &MoeKernelLauncherWrapper::launch, py::arg("tokens"),
            py::arg("output"))
       .def("destroy", &MoeKernelLauncherWrapper::destroy)

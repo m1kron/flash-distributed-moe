@@ -1,4 +1,4 @@
 LIBFLASHMOE_0.1 {
-  global: CreateLauncher; DestroyLauncher; getDistributedUniqueId; InitializeDistributed;
+  global: CreateLauncher; DestroyLauncher; getDistributedUniqueId;
   local: *;
 };
