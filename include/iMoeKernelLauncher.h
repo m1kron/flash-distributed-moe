@@ -22,18 +22,17 @@ struct DistributedUniqueId {
 
 }  // namespace moe
 
-// Gets the distributed unique id.
-extern "C" moe::DistributedUniqueId getDistributedUniqueId();
-
-extern "C" void InitializeDistributed(const moe::DistributedUniqueId& uid, int rank,
-                                    int worldSize);
+// Gets the distributed unique id. If empty is true, returns an empty unique id.
+extern "C" moe::DistributedUniqueId GetDistributedUniqueId(bool empty);
 
 // Creates launcher.
 extern "C" hipError_t CreateLauncher(moe::IMoeKernelLauncher** launcher,
                                      const void* gateWeights,
                                      const void* ffn1ExpertWeights,
                                      const void* ffn2ExpertWeights,
-                                     int maxTokens, hipStream_t stream);
+                                     int maxTokens, hipStream_t stream,
+                                     const moe::DistributedUniqueId& uid,
+                                     int rank, int worldSize);
 
 // Destroys launcher.
 extern "C" hipError_t DestroyLauncher(moe::IMoeKernelLauncher* launcher,

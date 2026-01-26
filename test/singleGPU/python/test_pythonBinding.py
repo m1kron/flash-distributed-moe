@@ -23,8 +23,8 @@ def test_pythonBinding():
     launcher = flashMoeLauncher.MoeKernelLauncher()
 
     assert launcher.valid == False
-
-    launcher.create(gate_w, ffn1_w, ffn2_w, tokens_num)
+    uniqueid = launcher.getDistributedUniqueId(empty=True)
+    launcher.create(gate_w, ffn1_w, ffn2_w, tokens_num, uniqueid, 0, 1)
 
     assert launcher.valid == True
 

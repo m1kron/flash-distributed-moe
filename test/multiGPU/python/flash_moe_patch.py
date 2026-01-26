@@ -56,20 +56,21 @@ def _get_flash_moe_wrapper_class():
 
             self.launcher = flashMoeLauncher.MoeKernelLauncher()
             self.maxTokens = maxTokens
+            
+            uniqueid = self.launcher.getDistributedUniqueId(empty=True)
+            gateWeights = self.gate.weight
+            ffn1ExpertWeights = self.experts.w13_weight
+            ffn2ExpertWeights = self.experts.w2_weight
 
             if ep_size == 1:
                 print("FlashMoeWrapper: Initializing single process")
-                gateWeights = self.gate.weight
-                ffn1ExpertWeights = self.experts.w13_weight
-                ffn2ExpertWeights = self.experts.w2_weight
 
                 self.launcher.create(
-                    gateWeights, ffn1ExpertWeights, ffn2ExpertWeights, maxTokens
+                    gateWeights, ffn1ExpertWeights, ffn2ExpertWeights, maxTokens, uniqueid, 0 , 1
                 )
             else:
                 print(f"FlashMoeWrapper: Initializing distributed ep_size={ep_size}, ep_rank={ep_rank}")
                 # Get distributed unique id as bytes and broadcast using broadcast_object_list
-                uniqueid = self.launcher.getDistributedUniqueId(empty=True)
                 if ep_rank == 0:
                     uniqueid = self.launcher.getDistributedUniqueId()
                     broadcast_objects = [uniqueid]
@@ -84,8 +85,12 @@ def _get_flash_moe_wrapper_class():
                 dist.barrier(ep_group)
 
                 uniqueid = broadcast_objects[0]
-
-                self.launcher.initializeDistributed(
+                
+                self.launcher.create(
+                    gateWeights, 
+                    ffn1ExpertWeights, 
+                    ffn2ExpertWeights, 
+                    maxTokens, 
                     uniqueid,
                     ep_rank,
                     ep_size
@@ -184,18 +189,20 @@ def _apply_flash_moe_patch():
                 self.launcher = flashMoeLauncher.MoeKernelLauncher()
                 self.maxTokens = maxTokens
 
+                uniqueid = self.launcher.getDistributedUniqueId(empty=True)
+                gateWeights = self.gate.weight
+                ffn1ExpertWeights = self.experts.w13_weight
+                ffn2ExpertWeights = self.experts.w2_weight
+
                 if ep_size == 1:
                     print("FlashMoeWrapper: Initializing single process")
-                    gateWeights = self.gate.weight
-                    ffn1ExpertWeights = self.experts.w13_weight
-                    ffn2ExpertWeights = self.experts.w2_weight
 
                     self.launcher.create(
-                        gateWeights, ffn1ExpertWeights, ffn2ExpertWeights, maxTokens
+                        gateWeights, ffn1ExpertWeights, ffn2ExpertWeights, maxTokens, uniqueid, 0 , 1
                     )
                 else:
                     print(f"FlashMoeWrapper: Initializing distributed ep_size={ep_size}, ep_rank={ep_rank}")
-                    uniqueid = self.launcher.getDistributedUniqueId(empty=True)
+                    # Get distributed unique id as bytes and broadcast using broadcast_object_list
                     if ep_rank == 0:
                         uniqueid = self.launcher.getDistributedUniqueId()
                         broadcast_objects = [uniqueid]
@@ -210,9 +217,17 @@ def _apply_flash_moe_patch():
                     dist.barrier(ep_group)
 
                     uniqueid = broadcast_objects[0]
-
-                    self.launcher.initializeDistributed(uniqueid, ep_rank, ep_size)
-
+                    
+                    self.launcher.create(
+                        gateWeights, 
+                        ffn1ExpertWeights, 
+                        ffn2ExpertWeights, 
+                        maxTokens, 
+                        uniqueid,
+                        ep_rank,
+                        ep_size
+                    )
+                
             def __del__(self):
                 self.launcher.destroy()
 

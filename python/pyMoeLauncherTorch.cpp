@@ -3,9 +3,9 @@
 #include <pybind11/pybind11.h>
 #include <torch/extension.h>
 
+#include <cstring>
 #include <stdexcept>
 #include <string>
-#include <cstring>
 
 #include "iMoeKernelLauncher.h"
 
@@ -36,24 +36,9 @@ class MoeKernelLauncherWrapper {
   // If empty is true, returns zero-initialized id without querying ROC-SHMEM.
   static py::bytes getDistributedUniqueId(bool empty) {
     moe::DistributedUniqueId id;
-    if (empty) {
-      std::memset(id.data, 0, sizeof(id.data));
-    } else {
-      id = ::getDistributedUniqueId();
-    }
+    id = ::GetDistributedUniqueId(empty);
     return py::bytes(reinterpret_cast<const char*>(id.data),
                      static_cast<size_t>(sizeof(id.data)));
-  }
-
-  // Initializes distributed rocSHMEM using provided unique id, rank and world size
-  static void initializeDistributed(const py::bytes& uid, int rank,
-                                    int worldSize) {
-    std::string s = uid;  // copy bytes into std::string
-    TORCH_CHECK(s.size() == sizeof(moe::DistributedUniqueId::data),
-                "uid must be 128 bytes");
-    moe::DistributedUniqueId id;
-    std::memcpy(id.data, s.data(), s.size());
-    ::InitializeDistributed(id, rank, worldSize);
   }
 
   void launch(const at::Tensor& tokens, const at::Tensor& output) {
@@ -85,16 +70,19 @@ class MoeKernelLauncherWrapper {
 
   void create(const at::Tensor& gate_weights,
               const at::Tensor& ffn1_expert_weights,
-              const at::Tensor& ffn2_expert_weights, int max_tokens) {
+              const at::Tensor& ffn2_expert_weights, int max_tokens,
+              const py::bytes& uid, int rank, int worldSize) {
     auto expertsSize = gate_weights.sizes()[0];
     auto hiddenSize = gate_weights.sizes()[1];
     auto interSize = ffn2_expert_weights.sizes()[2];
 
-    TORCH_CHECK(ffn1_expert_weights.sizes()[0] == expertsSize);
+    TORCH_CHECK(worldSize > 0);
+
+    TORCH_CHECK(ffn1_expert_weights.sizes()[0] == expertsSize / worldSize);
     TORCH_CHECK(ffn1_expert_weights.sizes()[1] == 2 * interSize);
     TORCH_CHECK(ffn1_expert_weights.sizes()[2] == hiddenSize);
 
-    TORCH_CHECK(ffn2_expert_weights.sizes()[0] == expertsSize);
+    TORCH_CHECK(ffn2_expert_weights.sizes()[0] == expertsSize / worldSize);
     TORCH_CHECK(ffn2_expert_weights.sizes()[1] == hiddenSize);
     TORCH_CHECK(ffn2_expert_weights.sizes()[2] == interSize);
 
@@ -108,8 +96,14 @@ class MoeKernelLauncherWrapper {
     const void* f1_ptr = ffn1_expert_weights.data_ptr();
     const void* f2_ptr = ffn2_expert_weights.data_ptr();
 
-    HIP_ERROR_CHECK(
-        CreateLauncher(&ptr_, gw_ptr, f1_ptr, f2_ptr, max_tokens, stream));
+    std::string s = uid;  // copy bytes into std::string
+    TORCH_CHECK(s.size() == sizeof(moe::DistributedUniqueId::data),
+                "uid must be 128 bytes");
+    moe::DistributedUniqueId duid;
+    std::memcpy(duid.data, s.data(), s.size());
+
+    HIP_ERROR_CHECK(CreateLauncher(&ptr_, gw_ptr, f1_ptr, f2_ptr, max_tokens,
+                                   stream, duid, rank, worldSize));
   }
 
   bool valid() const { return ptr_ != nullptr; }
@@ -123,19 +117,17 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 
   py::class_<MoeKernelLauncherWrapper>(m, "MoeKernelLauncher")
       .def(py::init())
-     .def_static("getDistributedUniqueId",
-        &MoeKernelLauncherWrapper::getDistributedUniqueId,
-        py::arg("empty") = false,
-      "Returns a 128-byte rocSHMEM unique id as bytes. If empty=True, returns zeros.")
-      .def_static("initializeDistributed",
-                  &MoeKernelLauncherWrapper::initializeDistributed,
-                  py::arg("uid"), py::arg("rank"), py::arg("world_size"),
-                  "Initialize rocSHMEM distributed context using the provided unique id")
+      .def_static("getDistributedUniqueId",
+                  &MoeKernelLauncherWrapper::getDistributedUniqueId,
+                  py::arg("empty") = false,
+                  "Returns a 128-byte rocSHMEM unique id as bytes. If "
+                  "empty=True, returns zeros.")
       .def("launch", &MoeKernelLauncherWrapper::launch, py::arg("tokens"),
            py::arg("output"))
       .def("destroy", &MoeKernelLauncherWrapper::destroy)
       .def("create", &MoeKernelLauncherWrapper::create, py::arg("gate_weights"),
            py::arg("ffn1_expert_weights"), py::arg("ffn2_expert_weights"),
-           py::arg("max_tokens"))
+           py::arg("max_tokens"), py::arg("uid"), py::arg("rank"),
+           py::arg("world_size"))
       .def_property_readonly("valid", &MoeKernelLauncherWrapper::valid);
 }
