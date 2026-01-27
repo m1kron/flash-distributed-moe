@@ -5,19 +5,20 @@
 
 namespace {
 constexpr float ERROR_ABS = 1e-5f;
-constexpr int TOKENS_NUM = 1;
-constexpr int EXPERTS_NUM =
-    moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::EXPERTS_NUM;
-constexpr int HIDDEN_SIZE =
-    moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::HIDDEN_SIZE;
-constexpr int EXPERT_INTERMEDIATE_SIZE =
-    moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::EXPERT_INTERMEDIATE_SIZE;
-constexpr int TOPK = moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::TOPK;
 
 class MoeMultiGPUTests : public MoeDistBaseTest {
  public:
   void Execute(const test::MoeInputCPU& inputCPU, int worldSize) {
+    constexpr int EXPERTS_NUM =
+        moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::EXPERTS_NUM;
+    constexpr int HIDDEN_SIZE =
+        moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::HIDDEN_SIZE;
+    constexpr int EXPERT_INTERMEDIATE_SIZE =
+        moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::EXPERT_INTERMEDIATE_SIZE;
+    constexpr int TOPK = moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::TOPK;
+
     const int tokensNum = inputCPU.tokens_host.size() / HIDDEN_SIZE;
+
     const auto refOut = test::refFullMoe(
         inputCPU.tokens_host.data(), inputCPU.gateWeights_host.data(),
         inputCPU.expertFFN1Weights_host.data(),
@@ -30,8 +31,8 @@ class MoeMultiGPUTests : public MoeDistBaseTest {
       test::MoeInputGPU gpuAlloc;
       test::AllocateInputGPU(inputCPU, gpuAlloc, rank, worldSize);
 
-      std::cout << "Rank " << rank << " will process "
-                << gpuAlloc.tokensNum <<  " tokens" << std::endl;
+      std::cout << "Rank " << rank << " will process " << gpuAlloc.tokensNum
+                << " tokens" << std::endl;
 
       hipStream_t stream = 0;
       moe::IMoeKernelLauncher* launcher = nullptr;
@@ -53,7 +54,6 @@ class MoeMultiGPUTests : public MoeDistBaseTest {
           hipMemcpy(output_host.data(), gpuAlloc.finalOutput_device,
                     output_host.size() * sizeof(float), hipMemcpyDeviceToHost));
 
-      // Free device memory.
       FreeInputGPU(gpuAlloc);
 
       HIP_ERROR_ASSERT(DestroyLauncher(launcher, stream));
