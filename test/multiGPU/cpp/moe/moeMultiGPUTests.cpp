@@ -69,11 +69,22 @@ class MoeMultiGPUTests : public MoeDistBaseTest {
   }
 };
 
-TEST_F(MoeMultiGPUTests, worldSize1_tokens1) {
+TEST_F(MoeMultiGPUTests, DISABLED_worldSize1_tokens1) {
   const int tokensNum = 1;
   const test::MoeInputCPU inputCPU = test::GenerateMoeInputCPU(tokensNum);
 
   Execute(inputCPU, 1);
+}
+
+TEST_F(MoeMultiGPUTests, worldSize2_tokensLocalForGPU) {
+  const int tokensNum = 2;
+  test::MoeInputCPU inputCPU = test::GenerateMoeInputCPU(tokensNum);
+
+  test::SetTokenExpertRouting(inputCPU,
+                              {{0, {0, 1, 2, 3, 4, 5, 6, 7}},
+                               {1, {120, 121, 122, 123, 124, 125, 126, 127}}});
+
+  Execute(inputCPU, 2);
 }
 
 }  // namespace

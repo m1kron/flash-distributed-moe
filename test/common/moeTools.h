@@ -1,4 +1,6 @@
 #pragma once
+#include <map>
+
 #include "src/hip/common/metadata.h"
 #include "utils.h"
 
@@ -29,6 +31,9 @@ void FreeInputGPU(MoeInputGPU& gpuInput);
 
 std::vector<float> ShardRefOutput(const std::vector<float>& refOut, int rank,
                                   int worldSize);
+
+void SetTokenExpertRouting(
+    MoeInputCPU& input, const std::map<int, std::vector<int>>& tokenToExperts);
 
 ////////////////////////////////////////////////////////////////////////
 //
@@ -177,4 +182,28 @@ inline std::vector<float> ShardRefOutput(const std::vector<float>& refOut,
 
   return shardedOutput;
 }
+
+////////////////////////////////////////////////////////////////////////
+inline void SetTokenExpertRouting(
+    MoeInputCPU& input, const std::map<int, std::vector<int>>& tokenToExperts) {
+  constexpr int EXPERTS_NUM =
+      moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::EXPERTS_NUM;
+  constexpr int HIDDEN_SIZE =
+      moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::HIDDEN_SIZE;
+  constexpr int TOPK = moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::TOPK;
+
+  const int tokensNum = input.tokens_host.size() / HIDDEN_SIZE;
+  std::fill(input.gateWeights_host.begin(), input.gateWeights_host.end(), 0.0f);
+
+  for (const auto& [tokenIdx, expertIds] : tokenToExperts) {
+    assert(tokenIdx < tokensNum);
+    assert(expertIds.size() == TOPK);
+    input.tokens_host[tokenIdx * HIDDEN_SIZE + tokenIdx] = 1.0f;
+    for (int expertId : expertIds) {
+      assert(expertId < EXPERTS_NUM);
+      input.gateWeights_host[expertId * HIDDEN_SIZE + tokenIdx] = 100.0f;
+    }
+  }
+}
+
 }  // namespace test
