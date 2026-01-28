@@ -69,7 +69,7 @@ class MoeMultiGPUTests : public MoeDistBaseTest {
   }
 };
 
-TEST_F(MoeMultiGPUTests, DISABLED_worldSize1_tokens1) {
+TEST_F(MoeMultiGPUTests, worldSize1_tokens1) {
   const int tokensNum = 1;
   const int worldSize = 1;
   const test::MoeInputCPU inputCPU = test::GenerateMoeInputCPU(tokensNum);
