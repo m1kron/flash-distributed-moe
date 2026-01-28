@@ -1,6 +1,6 @@
 #pragma once
 #include "src/hip/utils/hipDeviceUtils.h"
-#include "src/hip/utils/rocshmem.h"
+#include "src/hip/common/rocshmem/rocshmem.h"
 
 namespace moe {
 

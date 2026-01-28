@@ -2,7 +2,7 @@
 
 #include "hip/hipHostCommon.h"
 #include "include/iMoeKernelLauncher.h"
-#include "src/hip/utils/rocshmem.h"
+#include "src/hip/common/rocshmem/rocshmem.h"
 
 namespace moe {
 
