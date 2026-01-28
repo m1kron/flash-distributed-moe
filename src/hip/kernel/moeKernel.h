@@ -90,11 +90,6 @@ __global__ void moeKernel(
       rTask.expertIdx = rTask.expertIdx %
                         (EXPERTS_NUM / globalRemoteComManager.GetWorldSize());
 
-      // if (threadIdx.x == 0) {
-      //   printf("RANK: %i: Token %i goes to expert %i.\n", 0, rTask.tokenIdx,
-      //          rTask.expertIdx);
-      //}
-
       constexpr int FFN1_CHUNKS =
           RUNTIME_CONFIG::MOE_METADATA::TILES_CONFIG::FFN1_TILE_METADATA::N /
           RUNTIME_CONFIG::MOE_METADATA::TILES_CONFIG::FFN1_TILE_METADATA::

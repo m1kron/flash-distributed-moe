@@ -21,7 +21,6 @@ struct InternalState {
   void* ffn1Output_device;
   void* ffn2Output_device;
   int maxBlocksPerSM;
-  bool rocshmemInitialized = false;
 };
 
 template <typename MOE_METADATA>
@@ -93,42 +92,6 @@ hipError_t moeKernelLaunchFunc(InternalState* state, const void* tokens,
   return hipSuccess;
 }
 
-////////////////////////////////////////////////////////////////////
-hipError_t InitRocshmem(const moe::DistributedUniqueId& uid, int rank,
-                        int worldSize) {
-  rocshmem::rocshmem_uniqueid_t roc_uid;
-  memcpy(roc_uid.data(), uid.data, sizeof(uid.data));
-
-  rocshmem::rocshmem_init_attr_t attr;
-
-  if (rocshmem::rocshmem_set_attr_uniqueid_args(rank, worldSize, &roc_uid,
-                                                &attr) != 0) {
-    MOE_ERROR_LOG("rocshmem_set_attr_uniqueid_args failed");
-    return hipErrorUnknown;
-  }
-  if (rocshmem::rocshmem_init_attr(rocshmem::ROCSHMEM_INIT_WITH_UNIQUEID,
-                                   &attr) != 0) {
-    MOE_ERROR_LOG("rocshmem_init_attr failed");
-    return hipErrorUnknown;
-  }
-
-  const int rocshmem_rank = rocshmem::rocshmem_my_pe();
-  const int rocshmem_size = rocshmem::rocshmem_n_pes();
-
-  MOE_ASSERT(rocshmem_rank == rank);
-  MOE_ASSERT(rocshmem_size == worldSize);
-
-  int GPU_id;
-  HIP_ERROR_CHECK(hipGetDevice(&GPU_id));
-
-  MOE_ASSERT(GPU_id == rank);
-
-  MOE_LOG("[Rank %d/%d] Initialized rocSHMEM (rocSHMEM rank %d/%d) on GPU %d\n",
-          rank, worldSize, rocshmem_rank, rocshmem_size, GPU_id);
-
-  return hipSuccess;
-}
-
 ////////////////////////////////////////////////////////////////
 hipError_t MoeKernelLauncher::Init(const void* gateWeights,
                                    const void* ffn1ExpertWeights,
@@ -138,13 +101,8 @@ hipError_t MoeKernelLauncher::Init(const void* gateWeights,
                                    int rank, int worldSize) {
   m_internalState = new InternalState();
 
-  MOE_ASSERT(worldSize > 0);
-
-  if (worldSize > 1) {
-    HIP_ERROR_CHECK(InitRocshmem(uid, rank, worldSize));
-    m_internalState->rocshmemInitialized = true;
-  }
-  m_internalState->remoteComManagerHost.Init(worldSize);
+  HIP_ERROR_CHECK(
+      m_internalState->remoteComManagerHost.Init(uid, rank, worldSize));
 
   m_internalState->gateWeights = gateWeights;
   m_internalState->ffn1ExpertWeights = ffn1ExpertWeights;
@@ -237,13 +195,9 @@ hipError_t MoeKernelLauncher::Deinit(hipStream_t stream) {
   HIP_ERROR_CHECK(
       hipFreeAsync(m_internalState->chunkReduceSyncArrayDevice, stream));
   HIP_ERROR_CHECK(m_internalState->taskManagerHost.Deinit(stream));
-  m_internalState->remoteComManagerHost.Deinit();
+  HIP_ERROR_CHECK(m_internalState->remoteComManagerHost.Deinit());
 
   HIP_ERROR_CHECK(hipStreamSynchronize(stream));
-
-  if (m_internalState->rocshmemInitialized) {
-    rocshmem_finalize();
-  }
 
   delete m_internalState;
   return hipSuccess;

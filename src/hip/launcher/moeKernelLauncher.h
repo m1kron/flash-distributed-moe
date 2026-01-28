@@ -1,6 +1,5 @@
 #pragma once
 #include "include/iMoeKernelLauncher.h"
-#include "src/hip/utils/rocshmem.h"
 
 namespace moe {
 
