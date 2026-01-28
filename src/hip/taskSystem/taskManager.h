@@ -35,6 +35,10 @@ struct TaskManager {
   // Checks if the current number of executed tasks reached the max.
   __device__ bool DidExecuteExpectedNumberOfTasks() const;
 
+  // Decreases number of expected max tasks to execute.
+  __device__ uint32_t
+  DecreaseNumOfExpectedMaxTasks(uint32_t numOfTaskToDecrease);
+
   // Allocates new task in device code, returns nullptr if out of memory.
   __device__ TTask* AllocateTask();
 
@@ -125,6 +129,14 @@ template <typename TTask, uint32_t SIZE>
 inline __device__ void
 TaskManager<TTask, SIZE>::IncrementCurrentExecutedTasks() {
   atomicAdd(m_currentExecutedTasks, 1);
+}
+
+/////////////////////////////////////////////////////////////////
+template <typename TTask, uint32_t SIZE>
+inline __device__ uint32_t
+TaskManager<TTask, SIZE>::DecreaseNumOfExpectedMaxTasks(
+    uint32_t numOfTaskToDecrease) {
+  return atomicSub(m_expectedMaxTasks, numOfTaskToDecrease);
 }
 
 /////////////////////////////////////////////////////////////////

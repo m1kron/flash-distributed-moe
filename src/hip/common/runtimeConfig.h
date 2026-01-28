@@ -30,6 +30,16 @@ struct MoeRuntimeConfigImpl {
       GEMM_RUNTIME_CONFIG::GATE_GEMM_TILE_IMPL::NeededSharedMemBytes(),
       max(GEMM_RUNTIME_CONFIG::FFN1_GEMM_TILE_IMPL::NeededSharedMemBytes(),
           GEMM_RUNTIME_CONFIG::FFN2_GEMM_TILE_IMPL::NeededSharedMemBytes()));
+
+  static constexpr int GetOfTasksForOneTokenProcessedLocally() {
+    constexpr int ffn1TasksNum =
+        (MOE_METADATA::MOE_PROBLEM_CONFIG::EXPERT_INTERMEDIATE_SIZE /
+         MOE_METADATA::TILES_CONFIG::FFN1_TILE_METADATA::TILE_N);
+    constexpr int ffn2TasksNum =
+        (MOE_METADATA::MOE_PROBLEM_CONFIG::HIDDEN_SIZE /
+         MOE_METADATA::TILES_CONFIG::FFN2_TILE_METADATA::TILE_N);
+    return ffn1TasksNum + ffn2TasksNum;
+  }
 };
 
 using MoeRuntimeConfig = MoeRuntimeConfigImpl<moe::MoeImplMetadata>;

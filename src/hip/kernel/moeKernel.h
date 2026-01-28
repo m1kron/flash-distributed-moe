@@ -87,22 +87,83 @@ __global__ void moeKernel(
 
       constexpr int EXPERTS_NUM =
           RUNTIME_CONFIG::MOE_METADATA::MOE_PROBLEM_CONFIG::EXPERTS_NUM;
-      rTask.expertIdx = rTask.expertIdx %
-                        (EXPERTS_NUM / globalRemoteComManager.GetWorldSize());
+      const int expertsPerGpu =
+          EXPERTS_NUM / globalRemoteComManager.GetWorldSize();
+      const int expertIdxGlobal = rTask.expertIdx;
+      const int dstPeOfExpert = expertIdxGlobal / expertsPerGpu;
 
-      constexpr int FFN1_CHUNKS =
-          RUNTIME_CONFIG::MOE_METADATA::TILES_CONFIG::FFN1_TILE_METADATA::N /
-          RUNTIME_CONFIG::MOE_METADATA::TILES_CONFIG::FFN1_TILE_METADATA::
-              TILE_N;
+      rTask.expertIdx = expertIdxGlobal % expertsPerGpu;
+
+      const bool canBeProcessedLocally =
+          dstPeOfExpert == globalRemoteComManager.GetRank();
+
+      if (canBeProcessedLocally) {
+        if (threadIdx.x == 0) {
+          printf(
+              "RANK: %i: Token %i for global expert id: %i - will be processed "
+              "locally.\n",
+              globalRemoteComManager.GetRank(), rTask.tokenIdx,
+              expertIdxGlobal);
+        }
+
+        constexpr int FFN1_CHUNKS =
+            RUNTIME_CONFIG::MOE_METADATA::TILES_CONFIG::FFN1_TILE_METADATA::N /
+            RUNTIME_CONFIG::MOE_METADATA::TILES_CONFIG::FFN1_TILE_METADATA::
+                TILE_N;
 #pragma unroll
-      for (int i = 0; i < FFN1_CHUNKS; ++i) {
-        rTask.blockTileColStartIdx = i;
-        globalTaskManager.PushTask_warp(&rTask);
+        for (int i = 0; i < FFN1_CHUNKS; ++i) {
+          rTask.blockTileColStartIdx = i;
+          globalTaskManager.PushTask_warp(&rTask);
+        }
+      } else {
+        if (threadIdx.x == 0) {
+          printf(
+              "RANK: %i: Token %i for global expert id: %i - sending to rank: "
+              "%i\n",
+              globalRemoteComManager.GetRank(), rTask.tokenIdx, expertIdxGlobal,
+              dstPeOfExpert);
+        }
+
+        if (threadIdx.x == 0) {
+          constexpr int tasksToDecrease =
+              RUNTIME_CONFIG::GetOfTasksForOneTokenProcessedLocally();
+          const auto prev =
+              globalTaskManager.DecreaseNumOfExpectedMaxTasks(tasksToDecrease);
+
+          printf(
+              "RANK: %i: Decreasing number of max expected local tasks by: "
+              "%i, prev number of tasks: %i\n",
+              globalRemoteComManager.GetRank(), tasksToDecrease, prev);
+        }
+      }
+    }
+    {
+      if (threadIdx.x == 0) {
+        // TEMP HACK:
+        constexpr int reductionTasksNum = RUNTIME_CONFIG::MOE_METADATA::
+            TILES_CONFIG::REDUCTION_CHUNKS_PER_TOKEN;
+
+        const auto prev =
+            globalTaskManager.DecreaseNumOfExpectedMaxTasks(reductionTasksNum);
+
+        printf(
+            "RANK: %i: Decreasing number of max expected local tasks by: "
+            "%i, prev number of tasks: %i\n",
+            globalRemoteComManager.GetRank(), reductionTasksNum, prev);
       }
     }
   }
 
+  if (threadIdx.x == 0 && blockIdx.x == 0) {
+    printf("RANK: %i: Kernel starts worker loop.\n",
+           globalRemoteComManager.GetRank());
+  }
+
   workerTaskSystemLoop_block(globalTaskManager,
                              ExecuteGeneralTask<RUNTIME_CONFIG>, sharedMemPool);
+
+  if (threadIdx.x == 0 && blockIdx.x == 0) {
+    printf("RANK: %i: Kernel done.\n", globalRemoteComManager.GetRank());
+  }
 }
 }  // namespace moe
