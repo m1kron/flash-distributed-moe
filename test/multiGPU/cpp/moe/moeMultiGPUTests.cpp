@@ -71,13 +71,15 @@ class MoeMultiGPUTests : public MoeDistBaseTest {
 
 TEST_F(MoeMultiGPUTests, DISABLED_worldSize1_tokens1) {
   const int tokensNum = 1;
+  const int worldSize = 1;
   const test::MoeInputCPU inputCPU = test::GenerateMoeInputCPU(tokensNum);
 
-  Execute(inputCPU, 1);
+  Execute(inputCPU, worldSize);
 }
 
 TEST_F(MoeMultiGPUTests, worldSize4_tokensLocalForGPU) {
   const int tokensNum = 3;
+  const int worldSize = 4;
   test::MoeInputCPU inputCPU = test::GenerateMoeInputCPU(tokensNum);
 
   test::SetTokenExpertRouting(inputCPU,
@@ -85,7 +87,7 @@ TEST_F(MoeMultiGPUTests, worldSize4_tokensLocalForGPU) {
                                {1, {33, 34, 35, 36, 37, 38, 39, 40}},
                                {2, {64, 65, 66, 67, 68, 69, 70, 71}}});
 
-  Execute(inputCPU, 4);
+  Execute(inputCPU, worldSize);
 }
 
 }  // namespace
