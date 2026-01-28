@@ -23,36 +23,20 @@ struct InternalState {
   int maxBlocksPerSM;
 };
 
-template <typename MOE_METADATA>
+template <typename MOE_RUNTIME_CONFIG>
 int GetExpectedNumOfTasksForOneToken() {
-  const int ffn1TasksNum =
-      MOE_METADATA::MOE_PROBLEM_CONFIG::TOPK *
-      (MOE_METADATA::MOE_PROBLEM_CONFIG::EXPERT_INTERMEDIATE_SIZE /
-       MOE_METADATA::TILES_CONFIG::FFN1_TILE_METADATA::TILE_N);
-  const int ffn2TasksNum =
-      MOE_METADATA::MOE_PROBLEM_CONFIG::TOPK *
-      (MOE_METADATA::MOE_PROBLEM_CONFIG::HIDDEN_SIZE /
-       MOE_METADATA::TILES_CONFIG::FFN2_TILE_METADATA::TILE_N);
-  const int reductionTasksNum =
-      MOE_METADATA::TILES_CONFIG::REDUCTION_CHUNKS_PER_TOKEN;
+  constexpr int topk =
+      MOE_RUNTIME_CONFIG::MOE_METADATA::MOE_PROBLEM_CONFIG::TOPK;
+  constexpr int reductionTasksNum = MOE_RUNTIME_CONFIG::MOE_METADATA::
+      TILES_CONFIG::REDUCTION_CHUNKS_PER_TOKEN;
 
-  return ffn1TasksNum + ffn2TasksNum + reductionTasksNum;
+  return MOE_RUNTIME_CONFIG::GetOfTasksForOneTokenProcessedLocally() * topk +
+         reductionTasksNum;
 }
 
-template <typename MOE_METADATA>
+template <typename MOE_RUNTIME_CONFIG>
 int GetExpectedNumOfTasks(int tokensNum) {
-  const int ffn1TasksNum =
-      tokensNum * MOE_METADATA::MOE_PROBLEM_CONFIG::TOPK *
-      (MOE_METADATA::MOE_PROBLEM_CONFIG::EXPERT_INTERMEDIATE_SIZE /
-       MOE_METADATA::TILES_CONFIG::FFN1_TILE_METADATA::TILE_N);
-  const int ffn2TasksNum =
-      tokensNum * MOE_METADATA::MOE_PROBLEM_CONFIG::TOPK *
-      (MOE_METADATA::MOE_PROBLEM_CONFIG::HIDDEN_SIZE /
-       MOE_METADATA::TILES_CONFIG::FFN2_TILE_METADATA::TILE_N);
-  const int reductionTasksNum =
-      tokensNum * MOE_METADATA::TILES_CONFIG::REDUCTION_CHUNKS_PER_TOKEN;
-
-  return GetExpectedNumOfTasksForOneToken<MOE_METADATA>() * tokensNum;
+  return GetExpectedNumOfTasksForOneToken<MOE_RUNTIME_CONFIG>() * tokensNum;
 }
 
 template <typename MOE_RUNTIME_CONFIG>
@@ -64,7 +48,8 @@ hipError_t moeKernelLaunchFunc(InternalState* state, const void* tokens,
   dim3 grid(MOE_METADATA::HW_CONFIG::BLOCKS * state->maxBlocksPerSM);
   dim3 block(MOE_METADATA::HW_CONFIG::THREADS);
 
-  const int expectedNumTasks = GetExpectedNumOfTasks<MOE_METADATA>(tokensNum);
+  const int expectedNumTasks =
+      GetExpectedNumOfTasks<MOE_RUNTIME_CONFIG>(tokensNum);
 
   HIP_ERROR_CHECK(
       state->taskManagerHost.PrepareForNextLaunch(stream, expectedNumTasks));
@@ -115,7 +100,7 @@ hipError_t MoeKernelLauncher::Init(const void* gateWeights,
 
   // Task + tickets
   const int expectedMaxNumTasks =
-      GetExpectedNumOfTasks<moe::MoeImplMetadata>(maxTokens) +
+      GetExpectedNumOfTasks<moe::MoeRuntimeConfig>(maxTokens) +
       m_internalState->maxBlocksPerSM * moe::MoeImplMetadata::HW_CONFIG::BLOCKS;
 
   if (expectedMaxNumTasks >
@@ -124,7 +109,7 @@ hipError_t MoeKernelLauncher::Init(const void* gateWeights,
         (m_internalState->taskManagerHost.GetTaskQueueSize() -
          m_internalState->maxBlocksPerSM *
              moe::MoeImplMetadata::HW_CONFIG::BLOCKS) /
-        GetExpectedNumOfTasksForOneToken<moe::MoeImplMetadata>();
+        GetExpectedNumOfTasksForOneToken<moe::MoeRuntimeConfig>();
 
     MOE_ERROR_LOG(
         "Task queue size is not enough for max tokens: %i, current "
