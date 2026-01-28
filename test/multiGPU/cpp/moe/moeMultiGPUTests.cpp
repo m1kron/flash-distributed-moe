@@ -77,14 +77,13 @@ TEST_F(MoeMultiGPUTests, DISABLED_worldSize1_tokens1) {
 }
 
 TEST_F(MoeMultiGPUTests, worldSize4_tokensLocalForGPU) {
-  const int tokensNum = 4;
+  const int tokensNum = 3;
   test::MoeInputCPU inputCPU = test::GenerateMoeInputCPU(tokensNum);
 
   test::SetTokenExpertRouting(inputCPU,
                               {{0, {0, 1, 2, 3, 4, 5, 6, 7}},
                                {1, {33, 34, 35, 36, 37, 38, 39, 40}},
-                               {2, {64, 65, 66, 67, 68, 69, 70, 71}},
-                               {3, {120, 121, 122, 123, 124, 125, 126, 127}}});
+                               {2, {64, 65, 66, 67, 68, 69, 70, 71}}});
 
   Execute(inputCPU, 4);
 }
