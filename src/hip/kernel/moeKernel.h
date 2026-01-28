@@ -69,6 +69,8 @@ __global__ void moeKernel(
         TOPK>(tokens, gateWeights, tokenIdx, &topkVals_shared, &topkIdx_shared,
               sharedMemPool);
 
+    bool tokensWillBeSent = false;
+
     // Warp 0 pushes all the tasks...
     // TODO: make it more paralllel.
     for (int i = 0; i < TOPK; ++i) {
@@ -116,6 +118,7 @@ __global__ void moeKernel(
           globalTaskManager.PushTask_warp(&rTask);
         }
       } else {
+        tokensWillBeSent = true;
         if (threadIdx.x == 0) {
           printf(
               "RANK: %i: Token %i for global expert id: %i - sending to rank: "
@@ -138,7 +141,7 @@ __global__ void moeKernel(
       }
     }
     {
-      if (threadIdx.x == 0) {
+      if (threadIdx.x == 0 && tokensWillBeSent) {
         // TEMP HACK:
         constexpr int reductionTasksNum = RUNTIME_CONFIG::MOE_METADATA::
             TILES_CONFIG::REDUCTION_CHUNKS_PER_TOKEN;
