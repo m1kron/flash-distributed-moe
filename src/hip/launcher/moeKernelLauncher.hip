@@ -2,14 +2,17 @@
 #include "src/hip/common/runtimeConfig.h"
 #include "src/hip/hipHostCommon.h"
 #include "src/hip/kernel/moeKernel.h"
+#include "src/hip/kernel/remote/remoteComManager.h"
 
 namespace moe {
 
 extern __constant__ TaskManagerType globalTaskManager;
+extern __constant__ RemoteComManager globalRemoteComManager;
 extern __constant__ int* globalFFN1SyncArray;
 extern __constant__ int* globalChunkReduceSyncArray;
 struct InternalState {
   TaskManagerType taskManagerHost;
+  RemoteComManager remoteComManagerHost;
   const void* gateWeights;
   const void* ffn1ExpertWeights;
   const void* ffn2ExpertWeights;
@@ -18,7 +21,6 @@ struct InternalState {
   void* ffn1Output_device;
   void* ffn2Output_device;
   int maxBlocksPerSM;
-  bool rocshmemInitialized = false;
 };
 
 template <typename MOE_METADATA>
@@ -90,42 +92,6 @@ hipError_t moeKernelLaunchFunc(InternalState* state, const void* tokens,
   return hipSuccess;
 }
 
-////////////////////////////////////////////////////////////////////
-hipError_t InitRocshmem(const moe::DistributedUniqueId& uid, int rank,
-                        int worldSize) {
-  rocshmem::rocshmem_uniqueid_t roc_uid;
-  memcpy(roc_uid.data(), uid.data, sizeof(uid.data));
-
-  rocshmem::rocshmem_init_attr_t attr;
-
-  if (rocshmem::rocshmem_set_attr_uniqueid_args(rank, worldSize, &roc_uid,
-                                                &attr) != 0) {
-    MOE_ERROR_LOG("rocshmem_set_attr_uniqueid_args failed");
-    return hipErrorUnknown;
-  }
-  if (rocshmem::rocshmem_init_attr(rocshmem::ROCSHMEM_INIT_WITH_UNIQUEID,
-                                   &attr) != 0) {
-    MOE_ERROR_LOG("rocshmem_init_attr failed");
-    return hipErrorUnknown;
-  }
-
-  const int rocshmem_rank = rocshmem::rocshmem_my_pe();
-  const int rocshmem_size = rocshmem::rocshmem_n_pes();
-
-  MOE_ASSERT(rocshmem_rank == rank);
-  MOE_ASSERT(rocshmem_size == worldSize);
-
-  int GPU_id;
-  HIP_ERROR_CHECK(hipGetDevice(&GPU_id));
-
-  MOE_ASSERT(GPU_id == rank);
-
-  MOE_LOG("[Rank %d/%d] Initialized rocSHMEM (rocSHMEM rank %d/%d) on GPU %d\n",
-          rank, worldSize, rocshmem_rank, rocshmem_size, GPU_id);
-
-  return hipSuccess;
-}
-
 ////////////////////////////////////////////////////////////////
 hipError_t MoeKernelLauncher::Init(const void* gateWeights,
                                    const void* ffn1ExpertWeights,
@@ -135,12 +101,8 @@ hipError_t MoeKernelLauncher::Init(const void* gateWeights,
                                    int rank, int worldSize) {
   m_internalState = new InternalState();
 
-  MOE_ASSERT(worldSize > 0);
-
-  if (worldSize > 1) {
-    HIP_ERROR_CHECK(InitRocshmem(uid, rank, worldSize));
-    m_internalState->rocshmemInitialized = true;
-  }
+  HIP_ERROR_CHECK(
+      m_internalState->remoteComManagerHost.Init(uid, rank, worldSize));
 
   m_internalState->gateWeights = gateWeights;
   m_internalState->ffn1ExpertWeights = ffn1ExpertWeights;
@@ -202,6 +164,11 @@ hipError_t MoeKernelLauncher::Init(const void* gateWeights,
           sizeof(moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::TDataType),
       stream));
 
+  HIP_ERROR_CHECK(hipMemcpyToSymbolAsync(HIP_SYMBOL(globalRemoteComManager),
+                                         &m_internalState->remoteComManagerHost,
+                                         sizeof(RemoteComManager), 0,
+                                         hipMemcpyHostToDevice, stream));
+
   HIP_ERROR_CHECK(hipMemcpyToSymbolAsync(
       HIP_SYMBOL(globalTaskManager), &m_internalState->taskManagerHost,
       sizeof(TaskManagerType), 0, hipMemcpyHostToDevice, stream));
@@ -228,12 +195,9 @@ hipError_t MoeKernelLauncher::Deinit(hipStream_t stream) {
   HIP_ERROR_CHECK(
       hipFreeAsync(m_internalState->chunkReduceSyncArrayDevice, stream));
   HIP_ERROR_CHECK(m_internalState->taskManagerHost.Deinit(stream));
+  HIP_ERROR_CHECK(m_internalState->remoteComManagerHost.Deinit());
 
   HIP_ERROR_CHECK(hipStreamSynchronize(stream));
-
-  if (m_internalState->rocshmemInitialized) {
-    rocshmem_finalize();
-  }
 
   delete m_internalState;
   return hipSuccess;

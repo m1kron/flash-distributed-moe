@@ -1,4 +1,5 @@
 #pragma once
+#include "src/hip/kernel/remote/remoteComManager.h"
 #include "src/hip/kernel/tasks/ffn1Task.h"
 #include "src/hip/kernel/tasks/ffn2Task.h"
 #include "src/hip/kernel/tasks/internal/gateBlock.h"
@@ -83,6 +84,11 @@ __global__ void moeKernel(
       rTask.expertWeight = topkVals_shared[i];
       rTask.topkSlotIdx = i;
       rTask.taskType = TaskType::FFN1;
+
+      constexpr int EXPERTS_NUM =
+          RUNTIME_CONFIG::MOE_METADATA::MOE_PROBLEM_CONFIG::EXPERTS_NUM;
+      rTask.expertIdx = rTask.expertIdx %
+                        (EXPERTS_NUM / globalRemoteComManager.GetWorldSize());
 
       constexpr int FFN1_CHUNKS =
           RUNTIME_CONFIG::MOE_METADATA::TILES_CONFIG::FFN1_TILE_METADATA::N /
