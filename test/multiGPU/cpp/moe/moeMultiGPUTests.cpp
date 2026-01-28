@@ -90,4 +90,15 @@ TEST_F(MoeMultiGPUTests, worldSize4_tokensLocalForGPU) {
   Execute(inputCPU, worldSize);
 }
 
+TEST_F(MoeMultiGPUTests, worldSize2_tokenProcessedRemotely) {
+  const int tokensNum = 1;
+  const int worldSize = 2;
+  test::MoeInputCPU inputCPU = test::GenerateMoeInputCPU(tokensNum);
+
+  test::SetTokenExpertRouting(inputCPU,
+                              {{0, {64, 65, 66, 67, 68, 69, 70, 71}}});
+
+  Execute(inputCPU, worldSize);
+}
+
 }  // namespace
