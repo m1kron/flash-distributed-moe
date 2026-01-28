@@ -2,14 +2,17 @@
 #include "src/hip/common/runtimeConfig.h"
 #include "src/hip/hipHostCommon.h"
 #include "src/hip/kernel/moeKernel.h"
+#include "src/hip/kernel/remote/remoteComManager.h"
 
 namespace moe {
 
 extern __constant__ TaskManagerType globalTaskManager;
+extern __constant__ RemoteComManager globalRemoteComManager;
 extern __constant__ int* globalFFN1SyncArray;
 extern __constant__ int* globalChunkReduceSyncArray;
 struct InternalState {
   TaskManagerType taskManagerHost;
+  RemoteComManager remoteComManagerHost;
   const void* gateWeights;
   const void* ffn1ExpertWeights;
   const void* ffn2ExpertWeights;
@@ -141,6 +144,7 @@ hipError_t MoeKernelLauncher::Init(const void* gateWeights,
     HIP_ERROR_CHECK(InitRocshmem(uid, rank, worldSize));
     m_internalState->rocshmemInitialized = true;
   }
+  m_internalState->remoteComManagerHost.Init(worldSize);
 
   m_internalState->gateWeights = gateWeights;
   m_internalState->ffn1ExpertWeights = ffn1ExpertWeights;
@@ -202,6 +206,11 @@ hipError_t MoeKernelLauncher::Init(const void* gateWeights,
           sizeof(moe::MoeImplMetadata::MOE_PROBLEM_CONFIG::TDataType),
       stream));
 
+  HIP_ERROR_CHECK(hipMemcpyToSymbolAsync(HIP_SYMBOL(globalRemoteComManager),
+                                         &m_internalState->remoteComManagerHost,
+                                         sizeof(RemoteComManager), 0,
+                                         hipMemcpyHostToDevice, stream));
+
   HIP_ERROR_CHECK(hipMemcpyToSymbolAsync(
       HIP_SYMBOL(globalTaskManager), &m_internalState->taskManagerHost,
       sizeof(TaskManagerType), 0, hipMemcpyHostToDevice, stream));
@@ -228,6 +237,7 @@ hipError_t MoeKernelLauncher::Deinit(hipStream_t stream) {
   HIP_ERROR_CHECK(
       hipFreeAsync(m_internalState->chunkReduceSyncArrayDevice, stream));
   HIP_ERROR_CHECK(m_internalState->taskManagerHost.Deinit(stream));
+  m_internalState->remoteComManagerHost.Deinit();
 
   HIP_ERROR_CHECK(hipStreamSynchronize(stream));
 
