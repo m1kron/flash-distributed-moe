@@ -1,11 +1,10 @@
-# flash-moe
+# flash-distributed-moe
+Implementation of flashDmoe paper: https://arxiv.org/abs/2506.04667 paper for AMD's GPU ecoshystem. 
 
-Project status at last day of active development(28.01.2026).
+Uses rocshmem for inter-kernel communication.
+Implementes Qwen3 MoE, the goal is to integrate it with vllm.
 
-Flash-moe project aims to speedup Mixture of Experts operator for case where experts weights are distributed to different GPUs(each GPU gets different set of experts, assinged linearly) and each GPU has distict set of tokens. The initial focus was on decode phase where expected number of tokens is small. The main idea is to have a single kernel, which performs gate + experts calculations and also initalizes and transfers tokens to other GPUs at the same time.
-THe expected speedup comes from the fact that in this sceario kernel can overlap communication with other GPUS with computations and no all2all barriers are needed. 
-
-The idea is based on https://arxiv.org/abs/2506.04667 paper, but implementation is for AMD GPUs and ecosystem.
+WORK IN PROGRESS.
 
 The goal of current implementation was to provide POC implementation with focus of being correct and bug-free. Becasue of that all subsystems are not optimized.
 
