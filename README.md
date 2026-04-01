@@ -1,5 +1,5 @@
 # flash-distributed-moe
-Implementation of flashDmoe paper: https://arxiv.org/abs/2506.04667 paper for AMD's GPU ecoshystem. 
+Implementation of flashDmoe paper: https://arxiv.org/abs/2506.04667 paper for AMD's GPU ecosystem. 
 
 Uses rocshmem for inter-kernel communication.
 Implementes Qwen3 MoE, the goal is to integrate it with vllm.
